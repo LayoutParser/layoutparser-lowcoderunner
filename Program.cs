@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Text;
+using System.Xml.Linq;
 
 namespace LayoutParserLowCodeRunner
 {
@@ -29,6 +30,23 @@ namespace LayoutParserLowCodeRunner
                 var inputFile = Require(a, "--inputFile");
                 var outputFile = Require(a, "--outputFile");
                 var fileName = Get(a, "--fileName") ?? Path.GetFileName(inputFile);
+                var correlationId = Get(a, "--correlationId") ?? Guid.NewGuid().ToString("N");
+                var runnerLogFile = Get(a, "--runnerLogFile");
+
+                void Log(string msg)
+                {
+                    var line = $"{DateTime.UtcNow:O} [{correlationId}] {msg}";
+                    try { Console.WriteLine(line); } catch { }
+                    if (!string.IsNullOrWhiteSpace(runnerLogFile))
+                    {
+                        try
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(runnerLogFile)!);
+                            File.AppendAllText(runnerLogFile, line + Environment.NewLine, Encoding.UTF8);
+                        }
+                        catch { }
+                    }
+                }
 
                 if (string.IsNullOrWhiteSpace(mapperId) && string.IsNullOrWhiteSpace(mapperName))
                     throw new ArgumentException("Informe --mapperId ou --mapperName");
@@ -42,6 +60,27 @@ namespace LayoutParserLowCodeRunner
                 var globalConfigPath = Path.Combine(globalFolder, "global.config");
                 if (!File.Exists(globalConfigPath))
                     throw new FileNotFoundException($"global.config não encontrado em: {globalConfigPath}");
+
+                Log($"START sysmiddleDir='{sysmiddleDir}' globalConfig='{globalConfigPath}' package='{package}' mapperId='{mapperId ?? ""}' mapperName='{mapperName ?? ""}' inputFile='{inputFile}' outputFile='{outputFile}' fileName='{fileName}'");
+
+                // Logar o logger.xml configurado no global.config (se existir)
+                try
+                {
+                    var xdoc = XDocument.Load(globalConfigPath);
+                    var loggerPath = xdoc.Root?.Element("ConfigurationLoggerFilePath")?.Value;
+                    if (!string.IsNullOrWhiteSpace(loggerPath))
+                    {
+                        Log($"global.config -> ConfigurationLoggerFilePath='{loggerPath}' exists={File.Exists(loggerPath)}");
+                    }
+                    else
+                    {
+                        Log("global.config -> ConfigurationLoggerFilePath NÃO encontrado/vazio");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log($"WARN falha ao ler global.config (para logger.xml): {ex.Message}");
+                }
 
                 // Garantir que dependências sejam resolvidas a partir do sysmiddleDir
                 AppDomain.CurrentDomain.AssemblyResolve += (_, ev) =>
@@ -73,6 +112,7 @@ namespace LayoutParserLowCodeRunner
                 if (globalConfProp == null)
                     throw new MissingMemberException("APIManager.GlobalConfigurationFileName não encontrado");
                 globalConfProp.SetValue(null, globalConfigPath, null);
+                Log("APIManager.GlobalConfigurationFileName configurado");
 
                 // apiManager = APIManager.Instance
                 var instanceProp = apiManagerType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
@@ -81,6 +121,7 @@ namespace LayoutParserLowCodeRunner
                 var apiManager = instanceProp.GetValue(null, null);
                 if (apiManager == null)
                     throw new Exception("APIManager.Instance retornou null");
+                Log("APIManager.Instance obtido");
 
                 // apiExecutor = APIManager.Instance.GetApiExecutorByIdentifier(string.Empty, package)
                 var getExec = apiManagerType.GetMethod("GetApiExecutorByIdentifier", BindingFlags.Public | BindingFlags.Instance);
@@ -89,9 +130,11 @@ namespace LayoutParserLowCodeRunner
                 var apiExecutor = getExec.Invoke(apiManager, new object[] { string.Empty, package });
                 if (apiExecutor == null)
                     throw new Exception("GetApiExecutorByIdentifier retornou null (verifique package/global.config/licença)");
+                Log("APIExecutor obtido");
 
                 // Ler input
                 var inputContent = File.ReadAllText(inputFile, Encoding.UTF8);
+                Log($"Input lido: {inputContent.Length} chars");
 
                 // Resolver mapper
                 object mapper;
@@ -112,6 +155,7 @@ namespace LayoutParserLowCodeRunner
 
                 if (mapper == null)
                     throw new Exception("Mapper não encontrado (id/nome).");
+                Log($"Mapper resolvido: type={mapper.GetType().FullName}");
 
                 // MapperBasicVO deve ter IdentifierGuid
                 var mapperType = mapper.GetType();
@@ -119,6 +163,7 @@ namespace LayoutParserLowCodeRunner
                 if (idGuidProp == null)
                     throw new MissingMemberException("Mapper.IdentifierGuid não encontrado");
                 var mapperGuid = idGuidProp.GetValue(mapper, null);
+                Log($"Mapper IdentifierGuid={mapperGuid}");
 
                 // Executar mapper:
                 // ExecuteMapper(Guid/string, string document, bool?, string fileName)
@@ -139,9 +184,12 @@ namespace LayoutParserLowCodeRunner
                 if (execMapper == null)
                     throw new MissingMemberException("APIExecutor.ExecuteMapper (4 params) não encontrado");
 
+                var t0 = DateTime.UtcNow;
                 var mapperResult = execMapper.Invoke(apiExecutor, new object[] { mapperGuid, inputContent, true, fileName });
                 if (mapperResult == null)
                     throw new Exception("ExecuteMapper retornou null");
+                var dt = DateTime.UtcNow - t0;
+                Log($"ExecuteMapper OK em {dt.TotalMilliseconds:0}ms");
 
                 // MapperResultBasicVO.TransformedDocument
                 var transformedProp = mapperResult.GetType().GetProperty("TransformedDocument", BindingFlags.Public | BindingFlags.Instance);
@@ -150,6 +198,8 @@ namespace LayoutParserLowCodeRunner
 
                 var transformed = transformedProp.GetValue(mapperResult, null) as string ?? "";
                 File.WriteAllText(outputFile, transformed, Encoding.UTF8);
+                Log($"Output escrito: {transformed.Length} chars");
+                Log("END success");
 
                 return 0;
             }
