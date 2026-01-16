@@ -1,0 +1,33 @@
+name: LayoutParserLowCodeRunner - Build
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build (Release)
+        shell: pwsh
+        run: |
+          dotnet build .\LayoutParserLowCodeRunner.csproj -c Release
+
+      - name: Upload artifact (exe + logger.xml)
+        uses: actions/upload-artifact@v4
+        with:
+          name: LayoutParserLowCodeRunner
+          path: |
+            bin\Release\net48\LayoutParserLowCodeRunner.exe
+            bin\Release\net48\logger.xml
+
+
