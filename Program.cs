@@ -33,19 +33,23 @@ namespace LayoutParserLowCodeRunner
                 var correlationId = Get(a, "--correlationId") ?? Guid.NewGuid().ToString("N");
                 var runnerLogFile = Get(a, "--runnerLogFile");
 
+                // ✅ Nunca logar em console. Sempre em arquivo.
+                if (string.IsNullOrWhiteSpace(runnerLogFile))
+                {
+                    var fallbackDir = Path.Combine(Path.GetTempPath(), "layoutparser-lowcode", "runner-logs");
+                    Directory.CreateDirectory(fallbackDir);
+                    runnerLogFile = Path.Combine(fallbackDir, $"runner_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{correlationId}.log");
+                }
+
                 void Log(string msg)
                 {
                     var line = $"{DateTime.UtcNow:O} [{correlationId}] {msg}";
-                    try { Console.WriteLine(line); } catch { }
-                    if (!string.IsNullOrWhiteSpace(runnerLogFile))
+                    try
                     {
-                        try
-                        {
-                            Directory.CreateDirectory(Path.GetDirectoryName(runnerLogFile)!);
-                            File.AppendAllText(runnerLogFile, line + Environment.NewLine, Encoding.UTF8);
-                        }
-                        catch { }
+                        Directory.CreateDirectory(Path.GetDirectoryName(runnerLogFile)!);
+                        File.AppendAllText(runnerLogFile, line + Environment.NewLine, Encoding.UTF8);
                     }
+                    catch { }
                 }
 
                 if (string.IsNullOrWhiteSpace(mapperId) && string.IsNullOrWhiteSpace(mapperName))
@@ -236,7 +240,15 @@ namespace LayoutParserLowCodeRunner
             {
                 try
                 {
-                    Console.Error.WriteLine(ex.ToString());
+                    // ✅ Nunca escrever em console. Persistir erro no mesmo arquivo de log (se possível).
+                    var correlationId = Guid.NewGuid().ToString("N");
+                    var fallbackDir = Path.Combine(Path.GetTempPath(), "layoutparser-lowcode", "runner-logs");
+                    Directory.CreateDirectory(fallbackDir);
+                    var fallbackLog = Path.Combine(fallbackDir, $"runner_error_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{correlationId}.log");
+                    File.AppendAllText(
+                        fallbackLog,
+                        $"{DateTime.UtcNow:O} [{correlationId}] FATAL {ex}{Environment.NewLine}",
+                        Encoding.UTF8);
                 }
                 catch { }
                 return 2;
