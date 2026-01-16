@@ -33,7 +33,6 @@ namespace LayoutParserLowCodeRunner
                 var correlationId = Get(a, "--correlationId") ?? Guid.NewGuid().ToString("N");
                 var runnerLogFile = Get(a, "--runnerLogFile");
 
-                // ✅ Nunca logar em console. Sempre em arquivo.
                 if (string.IsNullOrWhiteSpace(runnerLogFile))
                 {
                     var fallbackDir = Path.Combine(Path.GetTempPath(), "layoutparser-lowcode", "runner-logs");
@@ -43,10 +42,11 @@ namespace LayoutParserLowCodeRunner
 
                 void Log(string msg)
                 {
-                    var line = $"{DateTime.UtcNow:O} [{correlationId}] {msg}";
+                    var line = $"{DateTime.UtcNow:O} [INF] [Corr:{correlationId}] {msg}";
                     try
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(runnerLogFile)!);
+                        RollIfNeeded(runnerLogFile, 2049L * 1024L, 10);
                         File.AppendAllText(runnerLogFile, line + Environment.NewLine, Encoding.UTF8);
                     }
                     catch { }
@@ -247,12 +247,37 @@ namespace LayoutParserLowCodeRunner
                     var fallbackLog = Path.Combine(fallbackDir, $"runner_error_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{correlationId}.log");
                     File.AppendAllText(
                         fallbackLog,
-                        $"{DateTime.UtcNow:O} [{correlationId}] FATAL {ex}{Environment.NewLine}",
+                        $"{DateTime.UtcNow:O} [ERR] [Corr:{correlationId}] FATAL {ex}{Environment.NewLine}",
                         Encoding.UTF8);
                 }
                 catch { }
                 return 2;
             }
+        }
+
+        private static void RollIfNeeded(string basePath, long maxBytes, int maxFiles)
+        {
+            try
+            {
+                var fi = new FileInfo(basePath);
+                if (!fi.Exists) return;
+                if (fi.Length < maxBytes) return;
+
+                var dir = fi.DirectoryName ?? ".";
+                var baseName = Path.GetFileNameWithoutExtension(basePath);
+                var ext = Path.GetExtension(basePath);
+                var stamp = DateTime.UtcNow.ToString("yyyy-MM-dd-HH-mm-ss-fff");
+                var rolled = Path.Combine(dir, $"{baseName}-{stamp}{ext}");
+                File.Move(basePath, rolled);
+
+                var files = new DirectoryInfo(dir).GetFiles($"{baseName}-*{ext}");
+                Array.Sort(files, (a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
+                for (int i = maxFiles - 1; i < files.Length; i++)
+                {
+                    try { files[i].Delete(); } catch { }
+                }
+            }
+            catch { }
         }
 
         private static Dictionary<string, string> ParseArgs(string[] args)
