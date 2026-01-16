@@ -63,19 +63,48 @@ namespace LayoutParserLowCodeRunner
 
                 Log($"START sysmiddleDir='{sysmiddleDir}' globalConfig='{globalConfigPath}' package='{package}' mapperId='{mapperId ?? ""}' mapperName='{mapperName ?? ""}' inputFile='{inputFile}' outputFile='{outputFile}' fileName='{fileName}'");
 
-                // Logar o logger.xml configurado no global.config (se existir)
+                var runnerDir = AppDomain.CurrentDomain.BaseDirectory;
+                var runnerLoggerXmlPath = Path.Combine(runnerDir, "logger.xml");
+                Log($"Runner logger.xml='{runnerLoggerXmlPath}' exists={File.Exists(runnerLoggerXmlPath)}");
+
+                // Criar um global.config temporário apontando para o logger.xml do runner
+                var tempGlobalConfigPath = Path.Combine(Path.GetTempPath(), "layoutparser-lowcode", $"global_{correlationId}.config");
+                Directory.CreateDirectory(Path.GetDirectoryName(tempGlobalConfigPath)!);
+
                 try
                 {
                     var xdoc = XDocument.Load(globalConfigPath);
+                    var root = xdoc.Root;
+                    if (root != null)
+                    {
+                        var loggerNode = root.Element("ConfigurationLoggerFilePath");
+                        if (loggerNode == null)
+                        {
+                            loggerNode = new XElement("ConfigurationLoggerFilePath");
+                            root.AddFirst(loggerNode);
+                        }
+                        loggerNode.Value = runnerLoggerXmlPath;
+                    }
+                    xdoc.Save(tempGlobalConfigPath);
+                    Log($"Temp global.config criado: '{tempGlobalConfigPath}' (forçando logger.xml do runner)");
+                }
+                catch (Exception ex)
+                {
+                    // Fallback: usar o global.config original se falhar o patch
+                    tempGlobalConfigPath = globalConfigPath;
+                    Log($"WARN não foi possível criar global.config temporário: {ex.Message}. Usando global.config original.");
+                }
+
+                // Logar o logger.xml configurado no global.config efetivo
+                try
+                {
+                    var xdoc = XDocument.Load(tempGlobalConfigPath);
                     var loggerPath = xdoc.Root?.Element("ConfigurationLoggerFilePath")?.Value;
                     if (!string.IsNullOrWhiteSpace(loggerPath))
-                    {
                         Log($"global.config -> ConfigurationLoggerFilePath='{loggerPath}' exists={File.Exists(loggerPath)}");
-                    }
                     else
-                    {
                         Log("global.config -> ConfigurationLoggerFilePath NÃO encontrado/vazio");
-                    }
+                    
                 }
                 catch (Exception ex)
                 {
@@ -111,7 +140,7 @@ namespace LayoutParserLowCodeRunner
                 var globalConfProp = apiManagerType.GetProperty("GlobalConfigurationFileName", BindingFlags.Public | BindingFlags.Static);
                 if (globalConfProp == null)
                     throw new MissingMemberException("APIManager.GlobalConfigurationFileName não encontrado");
-                globalConfProp.SetValue(null, globalConfigPath, null);
+                globalConfProp.SetValue(null, tempGlobalConfigPath, null);
                 Log("APIManager.GlobalConfigurationFileName configurado");
 
                 // apiManager = APIManager.Instance
