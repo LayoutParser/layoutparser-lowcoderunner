@@ -38,13 +38,12 @@ Erro: `{error,exitCode,correlationId}` — 400 (7) · 404 (8) · 422 (1/4/5/9/10
 5. **`DefaultMapperName`** é aplicado quando o request não traz nenhum mapper (a spec dizia 400).
 6. Fila cheia usa **503 + Retry-After** (não 429). Exit 2 e 6 mapeiam para 500; exit 7 para 400.
 7. Body só com `Content-Length` (sem `Transfer-Encoding: chunked`; 411).
-8. **Branch base:** este repositório não tem `develop` (só `master`); o PR foi preparado contra `master` até o dono
-   criar/indicar a branch.
+8. **Fluxo de branches:** feature → `develop` → `master` (promoção só por PR). O PR deste trabalho é contra `develop`; o #1 (versão antiga por reflection, já em master) é substituído por este serviço.
 
 ## Portas, rede e instalação
 
-- Porta padrão **5230** (`ListenPrefix`, default `http://localhost:5230/`). Para a rede: `http://0.0.0.0:5230/` **e**
-  regra de firewall só para o IP do host da API (o `install-service.ps1` cria; exige `-AllowedRemoteIp`).
+- Porta **5230**, alcançado como `lowcoderunner.local` (resolvido no cliente via `/etc/hosts`; o serviço liga por IP). `LowCode:BaseUrl=http://lowcoderunner.local:5230`. IP da API no firewall: 172.25.32.5.
+  regra de firewall só para o IP do host da API (o `install-service.ps1` cria; exige `-AllowedRemoteAddress`).
 - Instalação: `scripts/install-service.ps1` (idempotente); remoção: `scripts/uninstall-service.ps1`.
 - Validar de outra máquina da sub-rede autorizada: `curl http://<host>:5230/v1/health?deep=true`.
 

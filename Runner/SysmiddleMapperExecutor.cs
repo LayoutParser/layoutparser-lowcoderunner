@@ -79,6 +79,12 @@ namespace LayoutParserLowCodeRunner
     /// <see cref="RunnerExitCodes.PackageNotFound"/>. Tipo próprio para o Program distinguir isso de
     /// uma falha genérica sem depender de casar texto de mensagem.
     /// </summary>
+    /// <summary>Init do SDK falhou (instância/config ausente, licença, DLL) — vira <see cref="RunnerExitCodes.BootstrapFailed"/>.</summary>
+    internal sealed class SysmiddleBootstrapException : Exception
+    {
+        public SysmiddleBootstrapException(Exception inner) : base("Falha no bootstrap do SDK Sysmiddle.", inner) { }
+    }
+
     internal sealed class SysmiddlePackageNotFoundException : Exception
     {
         public SysmiddlePackageNotFoundException(string message) : base(message) { }

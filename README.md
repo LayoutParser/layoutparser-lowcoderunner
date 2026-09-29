@@ -66,6 +66,20 @@ Corpo acima de `MaxBodyBytes` (20 MB) → **413**. Só `Content-Length` (chunked
   (lista vazia, candidato ambíguo, mais de `MaxCandidates`).
 - **Cancelamento**: se o cliente fechar a conexão, o token é cancelado, o worker é morto e o slot volta.
 
+### Contrato v1 real (desvios da especificação inicial)
+
+| # | Especificado | Implementado | Impacto no cliente (API) |
+|---|---|---|---|
+| 1 | `HttpListener` | `TcpListener` (detecta desconexão do cliente; sem urlacl; bind por IP) | nenhum no wire |
+| 2 | fila cheia = 429 | **503 + `Retry-After`** | tratar 503 com `Retry-After` |
+| 3 | `/health` prova a licença | barato: `"license":"unchecked"`; prova só com `?deep=true` (sobe o SDK) | readiness usa o barato |
+| 4 | `mapperId` sempre na resposta | só quando o request usou `mapperId` | não depender do campo com `mapperName` |
+| 5 | `warnings` | sempre `[]` (worker sem canal de avisos) | ignorar por ora |
+| 6 | 400 sem mapper | usa `DefaultMapperName` se configurado (senão 400) | a API deve enviar mapper explícito |
+| 7 | — | só `Content-Length`; `chunked` → **411** | enviar `Content-Length` |
+| 8 | — | exit 3 (falha de bootstrap do SDK) agora é emitido pelo worker (antes caía em 1) → 503 | tratar 503 sem `Retry-After` como "runner indisponível" |
+| 9 | — | `runner.log` do worker sai com caminhos sanitizados | — |
+
 ### Erros
 
 Todo erro: `{"error":"<sanitizado>","exitCode":N,"correlationId":"…"}`. A mensagem é fixa por exit code e passa
@@ -115,22 +129,49 @@ tamanhos, tempos e exit codes. (O `runner.log` do worker registra o `fileName` l
 ### Instalar / remover
 
 ```powershell
-# Administrador. Conta SEM admin (virtual/gMSA/local). -AllowedRemoteIp = IP(s) do host da API.
-.\scripts\install-service.ps1 -InstallDir 'C:\Sysmiddle\Bin' -ServiceAccount 'NT SERVICE\LayoutParserLowCodeRunner' `
-    -SysmiddleDir 'C:\Sysmiddle\Bin' -GlobalFolder 'C:\Sysmiddle\globalfolder' -Package '<package>' `
-    -ListenPrefix 'http://0.0.0.0:5230/' -AllowedRemoteIp '10.0.0.10'
+# PowerShell ELEVADO no host Windows. API = VM Ubuntu 172.25.32.5.
+.\scripts\install-service.ps1 -SysmiddleDir '<Bin Sysmiddle>' -GlobalFolder '<pasta do global.config>' `
+    -Package '<package>' -BindAddress 0.0.0.0 -Port 5230 -AllowedRemoteAddress 172.25.32.5
 .\scripts\uninstall-service.ps1 [-RemoveFiles -InstallDir …] [-PurgeData]
 ```
 
-Ambos são idempotentes. O instalador cria serviço (auto-start), recovery (reinicia após 5 s/15 s/60 s), pastas com
-ACL restrita, a config em variáveis de ambiente **do serviço** (registro; nada de segredo no repositório) e a regra de
-firewall só para o IP da API. Sem urlacl (não usa `HttpListener`). *Os scripts têm a sintaxe validada, mas ainda não
-foram executados num host real.*
+Ambos são idempotentes (mesmo padrão do `install-service.ps1` do layoutparser-decrypt). O instalador copia o exe
+(por padrão **para dentro da Bin do Sysmiddle**: o worker resolve as DLLs pelo app base), cria o serviço
+(`delayed-auto`, recovery 5 s/15 s/60 s), grava a config em variáveis de ambiente **do serviço** (`REG_MULTI_SZ`; nada
+de segredo no repositório), aplica ACLs, cria a regra de firewall e **valida `/v1/health` e `/v1/health?deep=true` no
+fim — se falhar, termina com exit 1**. Parâmetros de rede: `-BindAddress` (IP ou `0.0.0.0`; nome é recusado),
+`-Port` (5230), `-AllowedRemoteAddress` (**obrigatório** quando o bind não é loopback). Firewall = porta + origem;
+`Any`, `*`, `0.0.0.0`, `0.0.0.0/0`, `::/0`, `LocalSubnet` e qualquer `/0` são recusados. Portas 8080 (outra API do
+host) e 5220 (decrypt) são recusadas. Sem urlacl. *O script tem a sintaxe validada, mas ainda **não foi executado**
+num host real.*
+
+### Nome, endereço e porta
+
+O serviço liga por **endereço IP** (`TcpListener`), nunca por nome. O nome `lowcoderunner.local` (o decrypt é
+`layoutparserdecrypt.local`:5220, ambos no **mesmo host Windows**) é resolvido **no cliente**: na VM Linux da API,
+
+```
+# /etc/hosts
+<IP-do-host-Windows>  lowcoderunner.local  layoutparserdecrypt.local
+```
+
+`.local` é mDNS e pode deixar a resolução lenta no Ubuntu; por isso o `/etc/hosts`. Cliente da API:
+`LowCode:BaseUrl=http://lowcoderunner.local:5230`. Porta do runner: **5230** (não 8080, não 5220).
+
+### Conta de serviço (proposta; decisão do dono)
+
+O worker precisa **ler** a Bin do Sysmiddle (DLLs), o `globalfolder` (`global.config` com a licença) e a instância
+Sysmiddle que o SDK abre na inicialização, e **escrever** em `%ProgramData%\LayoutParserLowCodeRunner` (logs/work).
+Default do script: `NT AUTHORITY\LocalService` (mínimo privilégio; ACLs concedidas pelo script). `LocalService` pode não
+alcançar a instância/licença do host (ex.: pastas em `Program Files` com ACL restrita ou dependência do perfil do
+usuário). Nesse caso, a menor conta que funciona é **uma conta local dedicada sem admin** (`.\svc-lowcoderunner`,
+direito *Log on as a service*) com: leitura+execução em `SysmiddleDir`, `GlobalFolder` e na pasta da instância do
+Sysmiddle, e modificação em `DataDir`. **Não usar** `LocalSystem`/administrador. Só o teste no host diz qual funciona.
 
 ### Segurança
 
 Sem segredo compartilhado: a autenticação é a **rede isolada** (firewall com allowlist do IP do host da API). Sem
-TLS/token/mTLS (decisão registrada; pode virar issue). `ListenPrefix` exposto na rede exige `-AllowedRemoteIp`.
+TLS/token/mTLS (decisão registrada; pode virar issue). `ListenPrefix` exposto na rede exige `-AllowedRemoteAddress`.
 
 ### Validar
 
@@ -172,6 +213,12 @@ O repositório contém **apenas código-fonte**. O build real define o símbolo 
 - variável de ambiente/propriedade `SYSMIDDLE_LIBS_DIR` = Bin da instância Sysmiddle **v4.4.1** (a que tem
   `log4net` 2.x), ou uma pasta `libs\` na raiz (ignorada pelo git). Referências usadas: `SysMiddle.Base.dll` e
   `SysMiddle.ConnectUs.Core.dll` (`Private=false`; o exe roda de dentro da Bin).
+- **De onde vêm as DLLs.** Da Bin da instância `Instance_FiatMQ` (`…\AppConnector.DIR\Bin`, v4.4.1, `DbProviderType=File`,
+  trazida do servidor). Uma cópia dessa Bin está hoje em `layoutparser-api\tools\LowCodeRunner\Functions` (239 DLLs;
+  `SysMiddle.Base`/`ConnectUs.Core` **4.4.1.0**, `log4net` **2.0.17**). Confira: `log4net.dll` da Bin deve ser **2.x**
+  (1.2.13.0 estoura em `InstanceFactory.Initialize()`). Build local contra ela:
+  `dotnet build -c Release -p:SYSMIDDLE_LIBS_DIR=<Bin>`. No runner self-hosted: variável **do repositório**
+  `SYSMIDDLE_LIBS_DIR` (ver `build.yml`, job `build-real`).
 - **Não** reintroduzir `appConnector.Client.Core/Interface` (bootstrap do host e threads que derrubavam o processo).
 - O CI hospedado não tem as DLLs: compila o stub e roda os testes. O **build real** roda só no runner
   `[self-hosted, windows, dev-local]` (o label `dev-local` também existe no runner Linux — **`windows` é obrigatório**),

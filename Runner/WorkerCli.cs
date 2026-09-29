@@ -77,6 +77,11 @@ namespace LayoutParserLowCodeRunner
                 RunnerLog.Fatal("{0}", ex.Message);
                 exitCode = RunnerExitCodes.PackageNotFound;
             }
+            catch (SysmiddleBootstrapException ex)
+            {
+                RunnerLog.Fatal("{0}", ex.InnerException);
+                exitCode = RunnerExitCodes.BootstrapFailed;
+            }
             catch (Exception ex)
             {
                 RunnerLog.Fatal("{0}", ex);
@@ -112,7 +117,20 @@ namespace LayoutParserLowCodeRunner
         /// </summary>
         private static SysmiddleMapperExecutor CriarExecutor(RunnerArgs cli)
         {
-            var apiExecutor = SysmiddleRuntime.Create(cli.GlobalFolder, cli.Package);
+            SysMiddle.API.APIExecutor apiExecutor;
+            try
+            {
+                apiExecutor = SysmiddleRuntime.Create(cli.GlobalFolder, cli.Package);
+            }
+            catch (SysmiddlePackageNotFoundException)
+            {
+                throw; // vira exit 10 no Main
+            }
+            catch (Exception ex)
+            {
+                // Init do SDK falhou (instancia/config ausente, licenca, DLL): exit 3 (503 no servico), nao um Fatal generico.
+                throw new SysmiddleBootstrapException(ex);
+            }
             return new SysmiddleMapperExecutor(apiExecutor, cli.NfePostProcessing);
         }
 

@@ -274,6 +274,60 @@ namespace LayoutParserLowCodeRunner.Tests
             Assert.Empty(Directory.GetDirectories(work));
         }
 
+        /// <summary>
+        /// Formato de erro: a API constrói o cliente a partir dele. Exatamente as chaves error (string),
+        /// exitCode (número) e correlationId (string), em application/json, com o mesmo id no header — para
+        /// TODO erro, inclusive os de protocolo (404/405/413) e os do worker (400/404/422/503/504).
+        /// </summary>
+        [Theory]
+        [InlineData("POST", "v1/transform", "{nao e json", 400, 7)]
+        [InlineData("POST", "v1/transform", "{\"document\":\"x\"}", 400, 7)]
+        [InlineData("POST", "v1/transform", "{\"document\":\"x\",\"mapperName\":\"NAOEXISTE\"}", 404, 8)]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:1\",\"mapperName\":\"M\"}", 422, 1)]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:3\",\"mapperName\":\"M\"}", 503, 3)]
+        [InlineData("POST", "v1/transform", "{\"document\":\"SLEEP:30000\",\"mapperName\":\"M\"}", 504, -1)]
+        [InlineData("GET", "v1/nada", null, 404, 0)]
+        [InlineData("GET", "v1/transform", null, 405, 0)]
+        [InlineData("POST", "v1/transform", "corpo-grande", 413, 0)]
+        public async Task Corpo_de_erro_tem_exatamente_as_tres_chaves_do_contrato(
+            string metodo, string rota, string corpo, int status, int exitCode)
+        {
+            using var t = new TestHost(new() { ["RunnerTimeoutSeconds"] = "1", ["MaxBodyBytes"] = "1024" });
+            var req = new HttpRequestMessage(new HttpMethod(metodo), rota);
+            if (corpo != null)
+            {
+                var texto = corpo == "corpo-grande" ? new string('a', 5000) : corpo;
+                req.Content = new StringContent(texto, Encoding.UTF8, "application/json");
+            }
+            var r = await t.Http.SendAsync(req);
+            var bruto = await r.Content.ReadAsStringAsync();
+
+            Assert.Equal(status, (int)r.StatusCode);
+            Assert.Equal("application/json", r.Content.Headers.ContentType?.MediaType);
+
+            using var doc = System.Text.Json.JsonDocument.Parse(bruto);
+            var raiz = doc.RootElement;
+            Assert.Equal(new[] { "correlationId", "error", "exitCode" },
+                raiz.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+            Assert.Equal(System.Text.Json.JsonValueKind.String, raiz.GetProperty("error").ValueKind);
+            Assert.False(string.IsNullOrWhiteSpace(raiz.GetProperty("error").GetString()));
+            Assert.Equal(exitCode, raiz.GetProperty("exitCode").GetInt32());
+            Assert.Equal(r.Headers.GetValues("X-Correlation-ID").Single(), raiz.GetProperty("correlationId").GetString());
+            Assert.DoesNotContain(@":\", bruto); // sem caminho
+        }
+
+        [Fact]
+        public async Task Sucesso_do_transform_tem_o_formato_do_contrato()
+        {
+            using var t = new TestHost();
+            var r = await t.Transform("x", mapperId: "MAP_1", mapperName: null);
+            using var doc = System.Text.Json.JsonDocument.Parse(await r.Content.ReadAsStringAsync());
+
+            Assert.Equal(new[] { "durationMs", "mapperId", "output", "warnings" },
+                doc.RootElement.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+            Assert.Equal(System.Text.Json.JsonValueKind.Array, doc.RootElement.GetProperty("warnings").ValueKind);
+        }
+
         [Fact]
         public async Task Servico_sem_globalFolder_e_503_e_nao_um_400_enganoso()
         {
