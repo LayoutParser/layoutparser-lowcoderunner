@@ -8,7 +8,7 @@
 //   EMPTY        exit 5 (EmptyResult)
 //   (outro)      sucesso: <fake mapper="..." file="..." chars="N" nfe="true|false"/>
 // Variáveis de ambiente (opcionais):
-//   FAKE_RUNNER_TRACK=<arquivo>   registra "S <pid> <ticks>" / "E <pid> <ticks>" (medir sobreposição e pids)
+//   FAKE_RUNNER_TRACK=<pasta>     cria um arquivo por evento S_<pid>_<ticks> / E_<pid>_<ticks> (sobreposição e pids)
 //   FAKE_RUNNER_MAPPERS="id1|Nome 1;id2|Nome 2"  catálogo do LIST
 //   FAKE_RUNNER_LIST_EXIT=<n>     exit code do LIST
 //   FAKE_RUNNER_NOPACKAGE=1       (padrão) package vazio => exit 9, como o worker real
@@ -105,21 +105,17 @@ namespace FakeLowCodeRunner
             return 0;
         }
 
+        // Um arquivo por evento (S_<pid>_<ticks> / E_<pid>_<ticks>): appends concorrentes no MESMO arquivo perdiam linhas no CI.
         private static void Track(string kind, int pid)
         {
-            var file = Environment.GetEnvironmentVariable("FAKE_RUNNER_TRACK");
-            if (string.IsNullOrEmpty(file)) return;
-            for (int i = 0; i < 20; i++)
+            var dir = Environment.GetEnvironmentVariable("FAKE_RUNNER_TRACK");
+            if (string.IsNullOrEmpty(dir)) return;
+            try
             {
-                try
-                {
-                    using (var fs = new FileStream(file, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
-                    using (var w = new StreamWriter(fs))
-                        w.WriteLine("{0} {1} {2}", kind, pid, DateTime.UtcNow.Ticks);
-                    return;
-                }
-                catch (IOException) { Thread.Sleep(10); }
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, kind + "_" + pid + "_" + DateTime.UtcNow.Ticks), "");
             }
+            catch { }
         }
     }
 }
