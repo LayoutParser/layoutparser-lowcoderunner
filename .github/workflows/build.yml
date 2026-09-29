@@ -4,31 +4,81 @@ on:
   push:
     branches: [ "**" ]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  # R0: nenhum binario proprietario nem credencial versionados. Sem dependencia de Windows => ubuntu.
+  guarda-binarios:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Falha se houver DLL/global.config versionado
+        run: |
+          bad=$(git ls-files | grep -Ei '(\.dll$|(^|/)global\.config$|(^|/)libs/)' || true)
+          if [ -n "$bad" ]; then
+            echo "Arquivos proibidos (R0) versionados:"; echo "$bad"; exit 1
+          fi
+
+  # Build SEM as DLLs proprietarias (worker = stub) + testes de contrato com o executor falso.
+  # net48/net481 nao compila nem executa no Linux; windows-latest hospedado basta (sem DLLs Sysmiddle).
+  testes:
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: "10.0.x"
 
-      - name: Build (Release)
+      - name: Build (Release, sem SDK Sysmiddle)
+        shell: pwsh
+        run: dotnet build .\LayoutParserLowCodeRunner.csproj -c Release
+
+      - name: Testes (executor falso)
+        shell: pwsh
+        run: dotnet test .\tests\LayoutParserLowCodeRunner.Tests\LayoutParserLowCodeRunner.Tests.csproj -c Release
+
+  # Build REAL: precisa das DLLs Sysmiddle, que existem so no runner self-hosted Windows (fora do git).
+  # ATENCAO ao label: 'dev-local' tambem existe no runner LINUX; 'windows' e obrigatorio.
+  # Nunca em pull_request (codigo de terceiros num runner com DLLs licenciadas).
+  build-real:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch')
+    needs: [guarda-binarios, testes]
+    runs-on: [self-hosted, windows, dev-local]
+    env:
+      # Pasta com a Bin Sysmiddle v4.4.1 NO RUNNER (variavel do repositorio/organizacao; nunca no git).
+      SYSMIDDLE_LIBS_DIR: ${{ vars.SYSMIDDLE_LIBS_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Exige SYSMIDDLE_LIBS_DIR
         shell: pwsh
         run: |
-          dotnet build .\LayoutParserLowCodeRunner.csproj -c Release
+          if (-not $env:SYSMIDDLE_LIBS_DIR -or -not (Test-Path (Join-Path $env:SYSMIDDLE_LIBS_DIR 'SysMiddle.Base.dll'))) {
+            Write-Error 'Defina a variavel SYSMIDDLE_LIBS_DIR (Bin Sysmiddle) no runner/repositorio.'; exit 1
+          }
 
-      - name: Upload artifact (exe + logger.xml + config)
+      - name: Build real (Release, x86, worker com SDK)
+        shell: pwsh
+        run: dotnet build .\LayoutParserLowCodeRunner.csproj -c Release
+
+      - name: Empacotar (sem DLLs proprietarias)
+        shell: pwsh
+        run: |
+          $out = 'bin\Release\net481'
+          $pkg = 'dist\LayoutParserLowCodeRunner'
+          New-Item -ItemType Directory -Force -Path "$pkg\scripts" | Out-Null
+          Copy-Item "$out\LayoutParserLowCodeRunner.exe", "$out\LayoutParserLowCodeRunner.exe.config", "$out\logger.xml" $pkg
+          Copy-Item scripts\*.ps1 "$pkg\scripts"
+          if (Get-ChildItem $pkg -Recurse -Include *.dll) { Write-Error 'DLL no pacote (R0)'; exit 1 }
+          Compress-Archive -Path "$pkg\*" -DestinationPath 'dist\LayoutParserLowCodeRunner.zip' -Force
+
+      - name: Upload artifact (exe + config + scripts, sem DLLs)
         uses: actions/upload-artifact@v4
         with:
           name: LayoutParserLowCodeRunner
-          path: |
-            bin\Release\net48\LayoutParserLowCodeRunner.exe
-            bin\Release\net48\logger.xml
-            bin\Release\net48\LayoutParserLowCodeRunner.exe.config
-
-
+          path: dist\LayoutParserLowCodeRunner.zip

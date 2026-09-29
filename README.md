@@ -1,56 +1,189 @@
 # LayoutParserLowCodeRunner
 
-Executa mappers do Sysmiddle (`SysMiddle.ConnectUs.API.dll`) em processo. Dois modos:
+Serviço Windows (net481, **x86**) que concentra a execução low-code (**Sysmiddle**) para a LayoutParserApi. A API
+(ASP.NET Core, migrando para Linux) chama este serviço por HTTP em rede isolada, em vez de fazer `Process.Start`
+localmente. Continua funcionando como **CLI/worker** (formas posicional e nomeada, `LIST`, `SWEEP`).
 
-- **Serviço HTTP (sidecar)**: Windows Service ou `--console`.
-- **CLI legado**: `--sysmiddleDir --globalFolder --package --mapperId|--mapperName --inputFile --outputFile [--fileName]`.
+- Não compila/roda no Linux: build real e deploy são Windows. O host precisa da **licença Sysmiddle** (do host).
+- Interpretador TCL / eliminar o runner proprietário: **fora de escopo** (Fase 6, issue #581).
+- **As DLLs Sysmiddle nunca entram no git** (ver [Binários proprietários](#binários-proprietários-r0)).
 
-As DLLs Sysmiddle são proprietárias e **não são versionadas** (`.gitignore`); ficam em `SysmiddleDir` na máquina.
+## Arquitetura
 
-## Configuração (`LayoutParserLowCodeRunner.exe.config`, `appSettings`)
-
-| Chave | Padrão | Descrição |
-|---|---|---|
-| `ListenPrefix` | `http://127.0.0.1:5080/` | Prefixo do HttpListener |
-| `SysmiddleDir` | — | Pasta com as DLLs Sysmiddle (local do Windows) |
-| `GlobalFolder` | — | Pasta com `global.config` |
-| `Package` | — | Package do Sysmiddle; vazio => `PackageNotConfigured` |
-| `MaxConcurrency` | `1` | Execuções simultâneas; excedente recebe 429 |
-| `TimeoutSeconds` | `180` | Timeout por request; estourou => 504 |
-| `LogFile` | `%ProgramData%\LayoutParserLowCodeRunner\logs\runner.log` | Log do runner |
-
-> **Atenção:** não se sabe se `APIManager`/`APIExecutor` são thread-safe. Mantenha `MaxConcurrency=1` até validar.
-> No timeout a thread do Sysmiddle não é abortada; ela continua até terminar e o slot só é liberado então.
-
-## Instalar como serviço
-
-```powershell
-sc.exe create LayoutParserLowCodeRunner binPath= "\"C:\svc\LayoutParserLowCodeRunner.exe\" --service" start= auto
-sc.exe start LayoutParserLowCodeRunner
+```
+ API (Linux) ──HTTP──▶ Serviço Windows (--service)              Workers (processos filhos, x86)
+                      ┌───────────────────────────────┐        ┌──────────────────────────────┐
+                      │ Http     MiniHttpServer/Router │        │ LayoutParserLowCodeRunner.exe │
+                      │ Application Transform/Batch/   │ spawn  │  (mesmo exe, forma nomeada)   │
+                      │   Catalog/Health/Budget/       ├───────▶│  SDK Sysmiddle + DocumentRules│
+                      │   ErrorSanitizer               │  kill  └──────────────────────────────┘
+                      │ Infra  ExecutionGate (slots+   │
+                      │   fila) WorkerLauncher, Options│
+                      │   RollingLogger                │
+                      └───────────────────────────────┘
 ```
 
-O `logger.xml` deve ficar ao lado do exe. Para testar em primeiro plano: `LayoutParserLowCodeRunner.exe --console`.
+- **Um worker por execução**: `kill` duro no timeout/cancelamento, isolamento do estado estático e da
+  thread-safety desconhecida das DLLs, e um crash não derruba o serviço. O protocolo com o worker é o **mesmo** da
+  API atual (`--globalFolder --package --inputFile --outputFile --fileName --correlationId --runnerLogFile
+  (--mapperId|--mapperName) --nfePostProcessing`), o que dá paridade por construção.
+- Execução em processo (sem worker) **não** foi implementada; só como otimização futura atrás de flag, se a
+  thread-safety for medida.
+- Servidor HTTP próprio sobre `TcpListener` (sem ASP.NET Core). *Desvio da especificação, que citava
+  HttpListener:* o `HttpListener` não expõe a desconexão do cliente, e o contrato exige que quem desiste não segure
+  slot. Bônus: não há **urlacl** para reservar (nem privilégio de admin para escutar).
 
-## API
+## Modos do exe
 
-- `POST /transform` — body JSON `{ "mapperId" | "mapperName", "content", "fileName"? }` (mapperId tem prioridade). 200 devolve o XML transformado (`application/xml`). Todas as respostas trazem `X-Correlation-Id`.
-- `GET /mappers` — lista `[{Id, Name}]`. **Depende de um método de listagem no `APIExecutor`** (`GetMappers`/`GetAllMappers`/`ListMappers`/`GetMapperList`, ver `TransformEngine.MapperListMethodNames`); não validado contra as DLLs reais.
-- `GET /health` — status, uptime, slots livres.
+| Comando | Modo |
+|---|---|
+| `LayoutParserLowCodeRunner.exe --service` | Serviço Windows (binPath do serviço) |
+| `LayoutParserLowCodeRunner.exe --console` | Mesmo host em primeiro plano (dev; Ctrl+C) |
+| `LayoutParserLowCodeRunner.exe [--worker] --globalFolder … ` | Worker / CLI nomeado (o que a API chamava) |
+| `LayoutParserLowCodeRunner.exe <globalFolder> <package> <mapperGuid\|LIST> <input> <output>` | CLI posicional legado |
+| `LayoutParserLowCodeRunner.exe SWEEP <globalFolder> <package> <mapperGuid> <exemplos> <saida>` | Lote legado |
 
-Erros: `{ "error": { "code", "exitCode", "message", "correlationId" } }`.
+O modo serviço é **explícito** (`--service`): o CLI também roda sem sessão interativa (ex.: pelo IIS).
 
-| Exit code | Nome | HTTP |
+## Contrato HTTP v1
+
+JSON UTF-8. `X-Correlation-ID` é aceito (`[A-Za-z0-9-_.]`, ≤ 64) ou gerado, e espelhado na resposta e em todo log.
+Corpo acima de `MaxBodyBytes` (20 MB) → **413**. Só `Content-Length` (chunked → 411). Uma requisição por conexão.
+
+| Rota | Descrição |
+|---|---|
+| `GET /v1/health[?deep=true]` | `200 {"status":"ok","license":"ok\|unchecked","package":"ok","globalFolder":"ok"}` ou `503 {"status":"degraded","reason":"…"}`. Sem `deep` valida worker, `global.config` e package configurado + resultado do último LIST. Com `deep=true` **sobe o SDK** (LIST): valida DLLs, licença e package de verdade (12-38 s). |
+| `GET /v1/info` | `{"version","build","x86","uptimeSeconds","package","maxConcurrent","running","queued"}` |
+| `GET /v1/mappers[?refresh=true]` | `[{"id","name"}]` (modo LIST, cache `MapperCacheSeconds`) |
+| `POST /v1/transform` | `{"document","fileName","mapperId\|null","mapperName\|null","nfePostProcessing":bool\|null}` → `200 {"output","warnings":[],"durationMs","mapperId"}` |
+| `POST /v1/transform/batch` | `{"document","fileName","candidates":[{"mapperId\|mapperName"}],"nfePostProcessing","budgetSeconds"?}` → `200 {"results":[{"index","mapperId","mapperName","status":"ok\|failed\|timeout\|skipped","output\|error","exitCode","durationMs"}],"waves","budgetSeconds","completed","partial"}` |
+
+- `mapperId` e `mapperName`: **exatamente um**, senão 400. Se nenhum vier e existir `DefaultMapperName`, ele é usado.
+- **Batch**: todos os candidatos disputam os slots (ondas = ⌈candidatos/slots⌉). Orçamento efetivo =
+  `min(ondas × RunnerTimeoutSeconds, budgetSeconds do cliente; 90 s se inválido)`. Estourou o orçamento ou o cliente
+  desistiu: workers em execução são mortos (`timeout`), os que não chegaram a rodar ficam `skipped`, e **o que já
+  terminou é devolvido** (`partial:true`). Sempre 200 (falhas por candidato); 4xx só para request inválido
+  (lista vazia, candidato ambíguo, mais de `MaxCandidates`).
+- **Cancelamento**: se o cliente fechar a conexão, o token é cancelado, o worker é morto e o slot volta.
+
+### Erros
+
+Todo erro: `{"error":"<sanitizado>","exitCode":N,"correlationId":"…"}`. A mensagem é fixa por exit code e passa
+pelo `LowCodeErrorSanitizer` (caminhos → `[caminho interno]`); nunca há stack, caminho ou conteúdo de documento.
+`exitCode` `-1` = falha sem exit de worker (timeout/cancelamento); `0` = sem exit (rota/método).
+
+| HTTP | Quando | exitCode |
 |---|---|---|
-| 0 | Success | 200 |
-| 2 | Unexpected | 500 |
-| 3 | InvalidArguments | 400 |
-| 4 | ConfigurationInvalid | 503 |
-| 5 | SysmiddleLoadFailed | 503 |
-| 6 | PackageNotConfigured | 503 |
-| 7 | PackageNotFound | 404 |
-| 8 | MapperNotFound | 404 |
-| 9 | TransformFailed | 422 |
-| 10 | Timeout | 504 |
-| — | Limite de concorrência | 429 |
+| 400 | JSON inválido; mapper ausente/ambíguo; candidato inválido | 7 |
+| 404 | `mapperName`/`mapperId` não resolvido; rota inexistente | 8 / 0 |
+| 405 / 411 / 413 | método errado / sem Content-Length / corpo grande | — |
+| 422 | documento vazio; falha de transformação; entrada não encontrada; resultado vazio; package não configurado / não encontrado | 4 / 1 / 4 / 5 / 9 / 10 |
+| 503 | bootstrap/licença do SDK (exit 3); serviço sem `GlobalFolder`; **fila cheia** (com `Retry-After`) | 3 / 0 |
+| 504 | timeout de execução (worker morto) | -1 |
+| 500 | interno / exit 2 / 6 / desconhecido | 1 / 2 / 6 |
 
-Fora do escopo: interpretador TCL (Fase 6).
+Exit codes do worker (`RunnerExitCodes`): 0 Ok, 1 Fatal, 2 UsageError (posicional), 3 BootstrapFailed, 4 InputNotFound,
+5 EmptyResult, 6 SweepAllFailed, 7 InvalidNamedArgument, 8 MapperNameUnresolved, 9 PackageNotConfigured, 10 PackageNotFound.
+
+## Configuração (do serviço; o cliente **não** envia caminhos)
+
+Prioridade: variável de ambiente `LowCodeRunner__<Chave>` › `appSettings` do `LayoutParserLowCodeRunner.exe.config` › default.
+Valor inválido cai no default com aviso no log de inicialização.
+
+| Chave | Default | Descrição |
+|---|---|---|
+| `SysmiddleDir` | — | Pasta da instância Sysmiddle (diagnóstico; o SDK resolve as DLLs pelo app base do exe) |
+| `GlobalFolder` | — | Pasta com o `global.config` (licença + paths locais). Ausente → 503 |
+| `Package` | — | Identificador do projeto Sysmiddle (`<PackageMappers>` do `config.xml`). Vazio → exit 9 |
+| `DefaultMapperName` | — | Mapper quando o request não informa nenhum |
+| `RunnerTimeoutSeconds` | `180` | Timeout por execução (medido 48-137 s) |
+| `MaxConcurrentRunners` | `2` | Slots simultâneos |
+| `MaxQueue` | `8` | Requisições únicas esperando slot; acima → 503 + `Retry-After` |
+| `MaxBodyBytes` | `20971520` | Limite do body (413) |
+| `NfePostProcessingDefault` | `false` | Pós-processamento NF-e quando o request não informa |
+| `ListenPrefix` | `http://localhost:5230/` | Bind (`localhost`, IP, ou `http://+:5230/`) |
+| `LogDir` | `%ProgramData%\LayoutParserLowCodeRunner\logs` | `service.log` + `runner.log` (rotação 10 MB × 10) |
+| `WorkerTempDir` | `%ProgramData%\LayoutParserLowCodeRunner\work` | Entrada/saída temporárias (removidas no `finally`) |
+| `WorkerExePath` | o próprio exe | Exe do worker (ex.: dentro da Bin Sysmiddle) |
+| `MapperCacheSeconds` / `MaxCandidates` / `GracefulShutdownSeconds` / `QueueRetryAfterSeconds` | `300` / `16` / `30` / `30` | |
+
+Logs: correlationId em toda linha; **nunca** documento, XML de saída, caminhos internos ou credenciais — só ids,
+tamanhos, tempos e exit codes. (O `runner.log` do worker registra o `fileName` lógico do documento.)
+
+## Operação
+
+### Instalar / remover
+
+```powershell
+# Administrador. Conta SEM admin (virtual/gMSA/local). -AllowedRemoteIp = IP(s) do host da API.
+.\scripts\install-service.ps1 -InstallDir 'C:\Sysmiddle\Bin' -ServiceAccount 'NT SERVICE\LayoutParserLowCodeRunner' `
+    -SysmiddleDir 'C:\Sysmiddle\Bin' -GlobalFolder 'C:\Sysmiddle\globalfolder' -Package '<package>' `
+    -ListenPrefix 'http://0.0.0.0:5230/' -AllowedRemoteIp '10.0.0.10'
+.\scripts\uninstall-service.ps1 [-RemoveFiles -InstallDir …] [-PurgeData]
+```
+
+Ambos são idempotentes. O instalador cria serviço (auto-start), recovery (reinicia após 5 s/15 s/60 s), pastas com
+ACL restrita, a config em variáveis de ambiente **do serviço** (registro; nada de segredo no repositório) e a regra de
+firewall só para o IP da API. Sem urlacl (não usa `HttpListener`). *Os scripts têm a sintaxe validada, mas ainda não
+foram executados num host real.*
+
+### Segurança
+
+Sem segredo compartilhado: a autenticação é a **rede isolada** (firewall com allowlist do IP do host da API). Sem
+TLS/token/mTLS (decisão registrada; pode virar issue). `ListenPrefix` exposto na rede exige `-AllowedRemoteIp`.
+
+### Validar
+
+```bash
+curl http://<host>:5230/v1/health            # barato
+curl "http://<host>:5230/v1/health?deep=true" # sobe o SDK: DLLs, licença, package, globalFolder
+curl http://<host>:5230/v1/info
+```
+
+O `/v1/health` **não** prova a licença sem `deep` (`"license":"unchecked"`): só subir o SDK a prova.
+
+### Troubleshooting
+
+| Sintoma | Causa provável |
+|---|---|
+| 422 `exitCode` 9 | `Package` vazio |
+| 422 `exitCode` 10 | `Package` não bate com o `config.xml` da instância, ou licença não validada |
+| 503 `exitCode` 3 | Falha no bootstrap do SDK (log4net 1.x na Bin, licença, DLL ausente). Veja `runner.log` |
+| 503 sem exit / `Retry-After` | Fila cheia (`MaxQueue`) ou `GlobalFolder` não configurado |
+| 504 | Worker passou de `RunnerTimeoutSeconds` (foi morto) |
+| Saída só com o envelope da NF-e | Worker rodando 64-bit: o exe deve ser **x86** |
+
+## Desenvolvimento e testes
+
+```bash
+dotnet build LayoutParserLowCodeRunner.csproj -c Release                 # sem DLLs: worker = stub (exit 3)
+dotnet test  tests/LayoutParserLowCodeRunner.Tests                        # contrato HTTP com o executor falso
+```
+
+`tools/FakeLowCodeRunner` é o dublê do worker (cenários por conteúdo do documento: `SLEEP:<ms>`, `EXIT:<n>`, `EMPTY`,
+e por mapeador: `SLOW:<ms>:x`, `FAIL:<n>:x`). Cobrem-se: 200/400/404/422/503/504/413, `X-Correlation-ID`, fila cheia,
+batch (ordem, ondas, parcial), cancelamento (worker morto e slot devolvido), carga leve sem vazar processos/pastas,
+ausência de vazamento nos logs — além dos testes portados da API (parser de argumentos, budget, sanitizer).
+
+### Binários proprietários (R0)
+
+O repositório contém **apenas código-fonte**. O build real define o símbolo `SYSMIDDLE` ao encontrar as DLLs:
+
+- variável de ambiente/propriedade `SYSMIDDLE_LIBS_DIR` = Bin da instância Sysmiddle **v4.4.1** (a que tem
+  `log4net` 2.x), ou uma pasta `libs\` na raiz (ignorada pelo git). Referências usadas: `SysMiddle.Base.dll` e
+  `SysMiddle.ConnectUs.Core.dll` (`Private=false`; o exe roda de dentro da Bin).
+- **Não** reintroduzir `appConnector.Client.Core/Interface` (bootstrap do host e threads que derrubavam o processo).
+- O CI hospedado não tem as DLLs: compila o stub e roda os testes. O **build real** roda só no runner
+  `[self-hosted, windows, dev-local]` (o label `dev-local` também existe no runner Linux — **`windows` é obrigatório**),
+  com `SYSMIDDLE_LIBS_DIR` como variável do repositório, e nunca em `pull_request`. O artefato é um zip com exe,
+  `.config`, `logger.xml` e scripts — **sem DLLs**. O exe sai em `bin\Release\net481\`.
+
+### Paridade com o exe de console
+
+```powershell
+.\scripts\Test-Parity.ps1 -Exe 'C:\Sysmiddle\Bin\LayoutParserLowCodeRunner.exe' -GlobalFolder … -Package … `
+    -CorpusDir 'D:\corpus' -ServiceUrl http://localhost:5230
+```
+
+Corpus (`manifest.tsv`: `arquivo<TAB>mapperId<TAB>nfe`) fica **fora do git**. Compara o XML do serviço com o do exe
+byte a byte e imprime só índice/mapper/status. Ver [docs/relatorio-api.md](docs/relatorio-api.md).
