@@ -1,283 +1,99 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
+using System.ServiceProcess;
 using System.Text;
-using System.Xml.Linq;
+using System.Threading;
+using LayoutParserLowCodeRunner.Runner;
+using LayoutParserLowCodeRunner.Service;
 
 namespace LayoutParserLowCodeRunner
 {
     internal static class Program
     {
-        // CLI:
-        // LayoutParserLowCodeRunner.exe --sysmiddleDir "C:\...\Sysmiddle" --globalFolder "C:\...\global" --package "XYZ" --mapperName "..." --mapperId "..." --inputFile "..." --outputFile "..." --fileName "..."
-        // - inputFile: texto/XML de entrada (UTF-8)
-        // - outputFile: XML transformado (UTF-8)
-        // Regras:
-        // - mapperId tem prioridade sobre mapperName
-        // - exige sysmiddleDir e globalFolder
+        // Modos:
+        // - --service (binPath do serviço Windows): API HTTP, config em LayoutParserLowCodeRunner.exe.config
+        // - --console: mesma API HTTP em primeiro plano (Ctrl+C encerra)
+        // - CLI legado (qualquer outro caso):
+        //   LayoutParserLowCodeRunner.exe --sysmiddleDir "C:\...\Sysmiddle" --globalFolder "C:\...\global" --package "XYZ" --mapperName "..." --mapperId "..." --inputFile "..." --outputFile "..." --fileName "..."
+        //   - mapperId tem prioridade sobre mapperName; exit code conforme RunnerExitCode
         public static int Main(string[] args)
         {
+            if (Array.Exists(args, x => string.Equals(x, "--console", StringComparison.OrdinalIgnoreCase)))
+                return RunConsole();
+
+            // Flag explícita: o CLI legado também roda sem sessão interativa (ex.: Process.Start a partir do IIS)
+            if (Array.Exists(args, x => string.Equals(x, "--service", StringComparison.OrdinalIgnoreCase)))
+            {
+                ServiceBase.Run(new RunnerService());
+                return 0;
+            }
+
+            return RunCli(args);
+        }
+
+        private static int RunConsole()
+        {
+            using (var host = new HttpHost(SidecarConfig.Load()))
+            using (var quit = new ManualResetEventSlim())
+            {
+                Console.CancelKeyPress += (_, e) => { e.Cancel = true; quit.Set(); };
+                host.Start();
+                Console.WriteLine("LayoutParserLowCodeRunner HTTP ativo. Ctrl+C para encerrar.");
+                quit.Wait();
+            }
+            return 0;
+        }
+
+        private static int RunCli(string[] args)
+        {
+            var correlationId = Guid.NewGuid().ToString("N");
             try
             {
                 var a = ParseArgs(args);
+                correlationId = Get(a, "--correlationId") ?? correlationId;
 
-                var sysmiddleDir = Require(a, "--sysmiddleDir");
-                var globalFolder = Require(a, "--globalFolder");
-                var package = Get(a, "--package") ?? "";
-                var mapperId = Get(a, "--mapperId");
-                var mapperName = Get(a, "--mapperName");
                 var inputFile = Require(a, "--inputFile");
                 var outputFile = Require(a, "--outputFile");
-                var fileName = Get(a, "--fileName") ?? Path.GetFileName(inputFile);
-                var correlationId = Get(a, "--correlationId") ?? Guid.NewGuid().ToString("N");
                 var runnerLogFile = Get(a, "--runnerLogFile");
+                var log = string.IsNullOrWhiteSpace(runnerLogFile) ? RunnerLog.Fallback(correlationId) : new RunnerLog(runnerLogFile);
 
-                if (string.IsNullOrWhiteSpace(runnerLogFile))
+                var engine = new TransformEngine(new EngineOptions
                 {
-                    var fallbackDir = Path.Combine(Path.GetTempPath(), "layoutparser-lowcode", "runner-logs");
-                    Directory.CreateDirectory(fallbackDir);
-                    runnerLogFile = Path.Combine(fallbackDir, $"runner_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{correlationId}.log");
-                }
+                    SysmiddleDir = Require(a, "--sysmiddleDir"),
+                    GlobalFolder = Require(a, "--globalFolder"),
+                    Package = Get(a, "--package") ?? ""
+                }, log);
 
-                void Log(string msg)
-                {
-                    var line = $"{DateTime.UtcNow:O} [INF] [Corr:{correlationId}] {msg}";
-                    try
-                    {
-                        Directory.CreateDirectory(Path.GetDirectoryName(runnerLogFile)!);
-                        RollIfNeeded(runnerLogFile, 2049L * 1024L, 10);
-                        File.AppendAllText(runnerLogFile, line + Environment.NewLine, Encoding.UTF8);
-                    }
-                    catch { }
-                }
+                var fileName = Get(a, "--fileName") ?? Path.GetFileName(inputFile);
+                log.Info(correlationId, $"START inputFile='{inputFile}' outputFile='{outputFile}' fileName='{fileName}'");
 
-                if (string.IsNullOrWhiteSpace(mapperId) && string.IsNullOrWhiteSpace(mapperName))
-                    throw new ArgumentException("Informe --mapperId ou --mapperName");
+                var content = File.ReadAllText(inputFile, Encoding.UTF8);
+                var transformed = engine.Transform(Get(a, "--mapperId"), Get(a, "--mapperName"), content, fileName, correlationId);
 
-                if (!Directory.Exists(sysmiddleDir))
-                    throw new DirectoryNotFoundException($"sysmiddleDir não existe: {sysmiddleDir}");
-
-                if (!Directory.Exists(globalFolder))
-                    throw new DirectoryNotFoundException($"globalFolder não existe: {globalFolder}");
-
-                var globalConfigPath = Path.Combine(globalFolder, "global.config");
-                if (!File.Exists(globalConfigPath))
-                    throw new FileNotFoundException($"global.config não encontrado em: {globalConfigPath}");
-
-                Log($"START sysmiddleDir='{sysmiddleDir}' globalConfig='{globalConfigPath}' package='{package}' mapperId='{mapperId ?? ""}' mapperName='{mapperName ?? ""}' inputFile='{inputFile}' outputFile='{outputFile}' fileName='{fileName}'");
-
-                var runnerDir = AppDomain.CurrentDomain.BaseDirectory;
-                var runnerLoggerXmlPath = Path.Combine(runnerDir, "logger.xml");
-                Log($"Runner logger.xml='{runnerLoggerXmlPath}' exists={File.Exists(runnerLoggerXmlPath)}");
-
-                // Criar um global.config temporário apontando para o logger.xml do runner
-                var tempGlobalConfigPath = Path.Combine(Path.GetTempPath(), "layoutparser-lowcode", $"global_{correlationId}.config");
-                Directory.CreateDirectory(Path.GetDirectoryName(tempGlobalConfigPath)!);
-
-                try
-                {
-                    var xdoc = XDocument.Load(globalConfigPath);
-                    var root = xdoc.Root;
-                    if (root != null)
-                    {
-                        var loggerNode = root.Element("ConfigurationLoggerFilePath");
-                        if (loggerNode == null)
-                        {
-                            loggerNode = new XElement("ConfigurationLoggerFilePath");
-                            root.AddFirst(loggerNode);
-                        }
-                        loggerNode.Value = runnerLoggerXmlPath;
-                    }
-                    xdoc.Save(tempGlobalConfigPath);
-                    Log($"Temp global.config criado: '{tempGlobalConfigPath}' (forçando logger.xml do runner)");
-                }
-                catch (Exception ex)
-                {
-                    // Fallback: usar o global.config original se falhar o patch
-                    tempGlobalConfigPath = globalConfigPath;
-                    Log($"WARN não foi possível criar global.config temporário: {ex.Message}. Usando global.config original.");
-                }
-
-                // Logar o logger.xml configurado no global.config efetivo
-                try
-                {
-                    var xdoc = XDocument.Load(tempGlobalConfigPath);
-                    var loggerPath = xdoc.Root?.Element("ConfigurationLoggerFilePath")?.Value;
-                    if (!string.IsNullOrWhiteSpace(loggerPath))
-                        Log($"global.config -> ConfigurationLoggerFilePath='{loggerPath}' exists={File.Exists(loggerPath)}");
-                    else
-                        Log("global.config -> ConfigurationLoggerFilePath NÃO encontrado/vazio");
-                    
-                }
-                catch (Exception ex)
-                {
-                    Log($"WARN falha ao ler global.config (para logger.xml): {ex.Message}");
-                }
-
-                // Garantir que dependências sejam resolvidas a partir do sysmiddleDir
-                AppDomain.CurrentDomain.AssemblyResolve += (_, ev) =>
-                {
-                    try
-                    {
-                        var name = new AssemblyName(ev.Name).Name + ".dll";
-                        var candidate = Path.Combine(sysmiddleDir, name);
-                        if (File.Exists(candidate))
-                            return Assembly.LoadFrom(candidate);
-                    }
-                    catch { }
-                    return null;
-                };
-
-                // Carregar a assembly principal do SysMiddle
-                var apiAsmPath = Path.Combine(sysmiddleDir, "SysMiddle.ConnectUs.API.dll");
-                if (!File.Exists(apiAsmPath))
-                    throw new FileNotFoundException($"SysMiddle.ConnectUs.API.dll não encontrado em: {apiAsmPath}");
-
-                var apiAsm = Assembly.LoadFrom(apiAsmPath);
-
-                // Tipos
-                var apiManagerType = apiAsm.GetType("SysMiddle.ConnectUs.API.Service.APIManager", throwOnError: true);
-                var apiExecutorType = apiAsm.GetType("SysMiddle.ConnectUs.API.Service.APIExecutor", throwOnError: true);
-
-                // APIManager.GlobalConfigurationFileName = ...\global.config
-                var globalConfProp = apiManagerType.GetProperty("GlobalConfigurationFileName", BindingFlags.Public | BindingFlags.Static);
-                if (globalConfProp == null)
-                    throw new MissingMemberException("APIManager.GlobalConfigurationFileName não encontrado");
-                globalConfProp.SetValue(null, tempGlobalConfigPath, null);
-                Log("APIManager.GlobalConfigurationFileName configurado");
-
-                // apiManager = APIManager.Instance
-                var instanceProp = apiManagerType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
-                if (instanceProp == null)
-                    throw new MissingMemberException("APIManager.Instance não encontrado");
-                var apiManager = instanceProp.GetValue(null, null);
-                if (apiManager == null)
-                    throw new Exception("APIManager.Instance retornou null");
-                Log("APIManager.Instance obtido");
-
-                // apiExecutor = APIManager.Instance.GetApiExecutorByIdentifier(string.Empty, package)
-                var getExec = apiManagerType.GetMethod("GetApiExecutorByIdentifier", BindingFlags.Public | BindingFlags.Instance);
-                if (getExec == null)
-                    throw new MissingMemberException("APIManager.GetApiExecutorByIdentifier não encontrado");
-                var apiExecutor = getExec.Invoke(apiManager, new object[] { string.Empty, package });
-                if (apiExecutor == null)
-                    throw new Exception("GetApiExecutorByIdentifier retornou null (verifique package/global.config/licença)");
-                Log("APIExecutor obtido");
-
-                // Ler input
-                var inputContent = File.ReadAllText(inputFile, Encoding.UTF8);
-                Log($"Input lido: {inputContent.Length} chars");
-
-                // Resolver mapper
-                object mapper;
-                if (!string.IsNullOrWhiteSpace(mapperId))
-                {
-                    var getMapperById = apiExecutorType.GetMethod("GetMapperByIdentifier", BindingFlags.Public | BindingFlags.Instance);
-                    if (getMapperById == null)
-                        throw new MissingMemberException("APIExecutor.GetMapperByIdentifier não encontrado");
-                    mapper = getMapperById.Invoke(apiExecutor, new object[] { mapperId });
-                }
-                else
-                {
-                    var getMapperByName = apiExecutorType.GetMethod("GetMapperByName", BindingFlags.Public | BindingFlags.Instance);
-                    if (getMapperByName == null)
-                        throw new MissingMemberException("APIExecutor.GetMapperByName não encontrado");
-                    mapper = getMapperByName.Invoke(apiExecutor, new object[] { mapperName });
-                }
-
-                if (mapper == null)
-                    throw new Exception("Mapper não encontrado (id/nome).");
-                Log($"Mapper resolvido: type={mapper.GetType().FullName}");
-
-                // MapperBasicVO deve ter IdentifierGuid
-                var mapperType = mapper.GetType();
-                var idGuidProp = mapperType.GetProperty("IdentifierGuid", BindingFlags.Public | BindingFlags.Instance);
-                if (idGuidProp == null)
-                    throw new MissingMemberException("Mapper.IdentifierGuid não encontrado");
-                var mapperGuid = idGuidProp.GetValue(mapper, null);
-                Log($"Mapper IdentifierGuid={mapperGuid}");
-
-                // Executar mapper:
-                // ExecuteMapper(Guid/string, string document, bool?, string fileName)
-                // Existem overloads; vamos escolher o que tem 4 parâmetros e aceita (object,string,bool,string)
-                var execMapperCandidates = apiExecutorType.GetMethods(BindingFlags.Public | BindingFlags.Instance);
-                MethodInfo execMapper = null;
-                foreach (var m in execMapperCandidates)
-                {
-                    if (!string.Equals(m.Name, "ExecuteMapper", StringComparison.Ordinal)) continue;
-                    var ps = m.GetParameters();
-                    if (ps.Length != 4) continue;
-                    if (ps[1].ParameterType != typeof(string)) continue;
-                    if (ps[2].ParameterType != typeof(bool)) continue;
-                    if (ps[3].ParameterType != typeof(string)) continue;
-                    execMapper = m;
-                    break;
-                }
-                if (execMapper == null)
-                    throw new MissingMemberException("APIExecutor.ExecuteMapper (4 params) não encontrado");
-
-                var t0 = DateTime.UtcNow;
-                var mapperResult = execMapper.Invoke(apiExecutor, new object[] { mapperGuid, inputContent, true, fileName });
-                if (mapperResult == null)
-                    throw new Exception("ExecuteMapper retornou null");
-                var dt = DateTime.UtcNow - t0;
-                Log($"ExecuteMapper OK em {dt.TotalMilliseconds:0}ms");
-
-                // MapperResultBasicVO.TransformedDocument
-                var transformedProp = mapperResult.GetType().GetProperty("TransformedDocument", BindingFlags.Public | BindingFlags.Instance);
-                if (transformedProp == null)
-                    throw new MissingMemberException("MapperResult.TransformedDocument não encontrado");
-
-                var transformed = transformedProp.GetValue(mapperResult, null) as string ?? "";
                 File.WriteAllText(outputFile, transformed, Encoding.UTF8);
-                Log($"Output escrito: {transformed.Length} chars");
-                Log("END success");
-
-                return 0;
+                log.Info(correlationId, $"Output escrito: {transformed.Length} chars");
+                log.Info(correlationId, "END success");
+                return (int)RunnerExitCode.Success;
             }
             catch (Exception ex)
             {
+                // Nunca escrever em console: o chamador só olha o exit code. Persistir o erro em arquivo.
+                var code = ex is RunnerException rex ? rex.Code
+                         : ex is ArgumentException ? RunnerExitCode.InvalidArguments
+                         : RunnerExitCode.Unexpected;
                 try
                 {
-                    // ✅ Nunca escrever em console. Persistir erro no mesmo arquivo de log (se possível).
-                    var correlationId = Guid.NewGuid().ToString("N");
-                    var fallbackDir = Path.Combine(Path.GetTempPath(), "layoutparser-lowcode", "runner-logs");
-                    Directory.CreateDirectory(fallbackDir);
-                    var fallbackLog = Path.Combine(fallbackDir, $"runner_error_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{correlationId}.log");
+                    var dir = Path.Combine(Path.GetTempPath(), "layoutparser-lowcode", "runner-logs");
+                    Directory.CreateDirectory(dir);
                     File.AppendAllText(
-                        fallbackLog,
-                        $"{DateTime.UtcNow:O} [ERR] [Corr:{correlationId}] FATAL {ex}{Environment.NewLine}",
+                        Path.Combine(dir, $"runner_error_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{correlationId}.log"),
+                        $"{DateTime.UtcNow:O} [ERR] [Corr:{correlationId}] FATAL ({code}) {ex}{Environment.NewLine}",
                         Encoding.UTF8);
                 }
                 catch { }
-                return 2;
+                return (int)code;
             }
-        }
-
-        private static void RollIfNeeded(string basePath, long maxBytes, int maxFiles)
-        {
-            try
-            {
-                var fi = new FileInfo(basePath);
-                if (!fi.Exists) return;
-                if (fi.Length < maxBytes) return;
-
-                var dir = fi.DirectoryName ?? ".";
-                var baseName = Path.GetFileNameWithoutExtension(basePath);
-                var ext = Path.GetExtension(basePath);
-                var stamp = DateTime.UtcNow.ToString("yyyy-MM-dd-HH-mm-ss-fff");
-                var rolled = Path.Combine(dir, $"{baseName}-{stamp}{ext}");
-                File.Move(basePath, rolled);
-
-                var files = new DirectoryInfo(dir).GetFiles($"{baseName}-*{ext}");
-                Array.Sort(files, (a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
-                for (int i = maxFiles - 1; i < files.Length; i++)
-                {
-                    try { files[i].Delete(); } catch { }
-                }
-            }
-            catch { }
         }
 
         private static Dictionary<string, string> ParseArgs(string[] args)
