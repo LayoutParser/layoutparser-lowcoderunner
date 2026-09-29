@@ -1,17 +1,63 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFramework>net481</TargetFramework>
+    <!-- O stack Sysmiddle (v4.4.1) é 32-bit e o host de produção é 32BITREQ. Compilar AnyCPU rodava 64-bit e
+         estourava BadImageFormatException ao carregar SysMiddle.ConnectUs.Functions.dll (x86), suprimindo
+         o ramo NFe inteiro (sintoma "envelope-only"). Manter x86. -->
+    <PlatformTarget>x86</PlatformTarget>
     <LangVersion>latest</LangVersion>
-    <Nullable>enable</Nullable>
-    <PlatformTarget>AnyCPU</PlatformTarget>
-    <Prefer32Bit>true</Prefer32Bit>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>LayoutParserLowCodeRunner</AssemblyName>
+    <RootNamespace>LayoutParserLowCodeRunner</RootNamespace>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>1.0.0</Version>
+    <!-- Testes e ferramentas têm projetos próprios -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="Runner\**\*.cs" />
+    <Compile Include="Service\**\*.cs" />
+  </ItemGroup>
+
+  <!--
+    R0 — DLLs proprietárias do Sysmiddle NÃO estão no repositório.
+    Build REAL (host Windows licenciado / runner self-hosted): defina SYSMIDDLE_LIBS_DIR (variável de ambiente
+    ou -p:SYSMIDDLE_LIBS_DIR=...) para a Bin da instância Sysmiddle v4.4.1 (a mesma com log4net 2.x), OU coloque
+    as DLLs em .\libs (ignorada pelo git). Com isso o símbolo SYSMIDDLE liga o worker real.
+    Sem isso (CI hospedado) o worker é um stub que sai com exit 3 e o serviço HTTP segue testável.
+  -->
+  <PropertyGroup Condition="'$(SYSMIDDLE_LIBS_DIR)' == '' And Exists('$(MSBuildProjectDirectory)\libs\SysMiddle.Base.dll')">
+    <SYSMIDDLE_LIBS_DIR>$(MSBuildProjectDirectory)\libs</SYSMIDDLE_LIBS_DIR>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(SYSMIDDLE_LIBS_DIR)' != ''">
+    <DefineConstants>$(DefineConstants);SYSMIDDLE</DefineConstants>
+  </PropertyGroup>
+
+  <!-- NÃO reintroduzir appConnector.Client.Core / appConnector.Client.Interface (decisão 2026-08-10, repo da API:
+       docs/architecture/decisao-remover-dependencia-appconnector.md): traz o bootstrap do host e threads que
+       derrubavam o processo. Private=false: o exe roda DE DENTRO da Bin, onde estão todas as deps. -->
+  <ItemGroup Condition="'$(SYSMIDDLE_LIBS_DIR)' != ''">
+    <Reference Include="SysMiddle.Base">
+      <HintPath>$(SYSMIDDLE_LIBS_DIR)\SysMiddle.Base.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SysMiddle.ConnectUs.Core">
+      <HintPath>$(SYSMIDDLE_LIBS_DIR)\SysMiddle.ConnectUs.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="System.Configuration" />
     <Reference Include="System.ServiceProcess" />
-    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Runtime.Serialization" />
   </ItemGroup>
 
   <ItemGroup>
@@ -19,6 +65,5 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
 </Project>
-
-

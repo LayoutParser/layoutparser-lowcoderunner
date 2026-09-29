@@ -1,6 +1,6 @@
 # LayoutParser LowCode Runner — Claude
 
-Sidecar .NET Framework 4.8: executa mappers do Sysmiddle em processo (reflection) e expõe API HTTP (serviço Windows) + CLI legado. Ver `README.md`.
+Serviço Windows (net481, x86): API HTTP v1 que executa mappers do Sysmiddle em workers (processos filhos) + CLI/worker legado. Build real só no runner self-hosted `[self-hosted, windows, dev-local]` com as DLLs fora do git. Ver `README.md`.
 
 ## Agentes (`.claude/agents/`)
 
