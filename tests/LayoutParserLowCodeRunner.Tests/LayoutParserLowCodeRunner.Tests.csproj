@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Testes SEM as DLLs proprietárias. As fontes puras/serviço são compiladas aqui por link (o projeto do runner é
+    net481/x86 e não é referenciável a partir de net10.0); o worker é o dublê tools/FakeLowCodeRunner (net48),
+    copiado para .\fake\ na saída. Rodam no Windows (Process, taskkill).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>LayoutParserLowCodeRunner.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Runner\RunnerArgs.cs" Link="Linked\RunnerArgs.cs" />
+    <Compile Include="..\..\Runner\SysmiddleDocumentRules.cs" Link="Linked\SysmiddleDocumentRules.cs" />
+    <Compile Include="..\..\Service\**\*.cs" Exclude="..\..\Service\RunnerService.cs" LinkBase="Linked\Service" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\tools\FakeLowCodeRunner\FakeLowCodeRunner.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <Target Name="CopyFakeRunner" AfterTargets="Build">
+    <ItemGroup>
+      <FakeRunnerFiles Include="..\..\tools\FakeLowCodeRunner\bin\$(Configuration)\net48\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FakeRunnerFiles)" DestinationFolder="$(OutDir)fake\" />
+  </Target>
+
+</Project>

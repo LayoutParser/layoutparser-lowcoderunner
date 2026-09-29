@@ -364,3 +364,8 @@ FodyWeavers.xsd
 # DLLs proprietárias do Sysmiddle: nunca versionar
 SysMiddle*.dll
 [Ss]ysmiddle/
+
+# Sysmiddle local (R0)
+libs/
+globalfolder/
+global.config

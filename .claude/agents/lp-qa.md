@@ -36,7 +36,7 @@ Sem as DLLs reais, use um Sysmiddle **falso** (assembly `SysMiddle.ConnectUs.API
 ## 3. Checklist
 
 - [ ] Build passa sem warnings novos relevantes.
-- [ ] Cada `RunnerExitCode` mapeia para o HTTP documentado.
+- [ ] Cada exit code do worker (`RunnerExitCodes`) mapeia para o HTTP documentado.
 - [ ] Erros do engine não viram 500 genérico.
 - [ ] Slot de concorrência é liberado após timeout/falha.
 - [ ] CLI legado mantém os exit codes.

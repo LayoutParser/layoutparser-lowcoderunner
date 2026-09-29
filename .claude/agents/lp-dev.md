@@ -26,10 +26,10 @@ Você é o **dev** do Runner. Escreve C# para **net48** (LangVersion latest) que
 
 ## 2. Regras
 
-- **BUSCAR antes de criar:** reuse `RunnerLog`, `RunnerException`/`RunnerExitCode`, `TransformEngine`.
-- Novo erro de negócio => novo `RunnerExitCode` + `HttpStatus()` + linha na tabela do README.
+- **BUSCAR antes de criar:** reuse `RunnerLog`, `RunnerExitCodes`, `LowCodeExecutor`, `ExitMap`.
+- Novo exit code => `RunnerExitCodes` + `ExitMap.Status/Message` + tabela do README (contrato v1).
 - CLI nunca escreve em console (o chamador só olha o exit code); erros vão para arquivo.
-- O modo serviço só liga com `--service` (o CLI também roda sem sessão interativa).
+- O modo serviço só liga com `--service` (o CLI/worker também roda sem sessão interativa). `Runner/` = worker (SDK, `#if SYSMIDDLE`); `Service/` = Http/Application/Infra sem DLLs.
 - Sem NuGet novo sem necessidade: o build precisa rodar em `windows-latest` com `dotnet build`.
 - Comentários em PT-BR, no estilo do código.
 
