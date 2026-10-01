@@ -233,4 +233,4 @@ O repositório contém **apenas código-fonte**. O build real define o símbolo 
 ```
 
 Corpus (`manifest.tsv`: `arquivo<TAB>mapperId<TAB>nfe`) fica **fora do git**. Compara o XML do serviço com o do exe
-byte a byte e imprime só índice/mapper/status. Ver [docs/relatorio-api.md](docs/relatorio-api.md).
+byte a byte e imprime só índice/mapper/status. Contrato completo com exemplos JSON: [docs/contrato-v1.md](docs/contrato-v1.md). Relatório para a API: [docs/relatorio-api.md](docs/relatorio-api.md).
