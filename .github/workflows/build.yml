@@ -45,12 +45,14 @@ jobs:
   # Build REAL: precisa das DLLs Sysmiddle, que existem so no runner self-hosted Windows (fora do git).
   # Labels: 'windows, production' = runner de producao (usado aqui); 'windows, dev-local' = maquina de teste do dev.
   # Nunca em pull_request (codigo de terceiros num runner com DLLs licenciadas).
+  # SYSMIDDLE_LIBS_DIR vem do environment 'production'; as regras de deployment do environment limitam o job (hoje: master e tag).
   build-real:
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch')
     needs: [guarda-binarios, testes]
     runs-on: [self-hosted, windows, production]
+    environment: production
     env:
-      # Pasta com a Bin Sysmiddle v4.4.1 NO RUNNER (variavel do repositorio/organizacao; nunca no git).
+      # Pasta com a Bin Sysmiddle v4.4.1 NO RUNNER (variavel do environment production; nunca no git).
       SYSMIDDLE_LIBS_DIR: ${{ vars.SYSMIDDLE_LIBS_DIR }}
     steps:
       - uses: actions/checkout@v4
