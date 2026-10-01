@@ -221,7 +221,7 @@ O repositório contém **apenas código-fonte**. O build real define o símbolo 
   `SYSMIDDLE_LIBS_DIR` (ver `build.yml`, job `build-real`).
 - **Não** reintroduzir `appConnector.Client.Core/Interface` (bootstrap do host e threads que derrubavam o processo).
 - O CI hospedado não tem as DLLs: compila o stub e roda os testes. O **build real** roda só no runner
-  `[self-hosted, windows, dev-local]` (o label `dev-local` também existe no runner Linux — **`windows` é obrigatório**),
+  `[self-hosted, windows, production]` (`[self-hosted, windows, dev-local]` é a máquina de teste do dev; `windows` é obrigatório nos dois),
   com `SYSMIDDLE_LIBS_DIR` como variável do repositório, e nunca em `pull_request`. O artefato é um zip com exe,
   `.config`, `logger.xml` e scripts — **sem DLLs**. O exe sai em `bin\Release\net481\`.
 

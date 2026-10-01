@@ -43,12 +43,12 @@ jobs:
         run: dotnet test .\tests\LayoutParserLowCodeRunner.Tests\LayoutParserLowCodeRunner.Tests.csproj -c Release
 
   # Build REAL: precisa das DLLs Sysmiddle, que existem so no runner self-hosted Windows (fora do git).
-  # ATENCAO ao label: 'dev-local' tambem existe no runner LINUX; 'windows' e obrigatorio.
+  # Labels: 'windows, production' = runner de producao (usado aqui); 'windows, dev-local' = maquina de teste do dev.
   # Nunca em pull_request (codigo de terceiros num runner com DLLs licenciadas).
   build-real:
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch')
     needs: [guarda-binarios, testes]
-    runs-on: [self-hosted, windows, dev-local]
+    runs-on: [self-hosted, windows, production]
     env:
       # Pasta com a Bin Sysmiddle v4.4.1 NO RUNNER (variavel do repositorio/organizacao; nunca no git).
       SYSMIDDLE_LIBS_DIR: ${{ vars.SYSMIDDLE_LIBS_DIR }}

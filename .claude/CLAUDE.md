@@ -1,6 +1,6 @@
 # LayoutParser LowCode Runner — Claude
 
-Serviço Windows (net481, x86): API HTTP v1 que executa mappers do Sysmiddle em workers (processos filhos) + CLI/worker legado. Build real só no runner self-hosted `[self-hosted, windows, dev-local]` com as DLLs fora do git. Ver `README.md`.
+Serviço Windows (net481, x86): API HTTP v1 que executa mappers do Sysmiddle em workers (processos filhos) + CLI/worker legado. Build real só no runner self-hosted `[self-hosted, windows, production]` com as DLLs fora do git. Ver `README.md`.
 
 ## Agentes (`.claude/agents/`)
 
