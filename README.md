@@ -222,7 +222,7 @@ O repositório contém **apenas código-fonte**. O build real define o símbolo 
 - **Não** reintroduzir `appConnector.Client.Core/Interface` (bootstrap do host e threads que derrubavam o processo).
 - O CI hospedado não tem as DLLs: compila o stub e roda os testes. O **build real** roda só no runner
   `[self-hosted, windows, production]` (`[self-hosted, windows, dev-local]` é a máquina de teste do dev; `windows` é obrigatório nos dois),
-  com `SYSMIDDLE_LIBS_DIR` como variável do repositório, e nunca em `pull_request`. Roda só em `master` (ou `workflow_dispatch`), conforme as regras do environment `production`; PRs para `master` só são aceitos a partir de `develop` (workflow `master-promotion-guard.yml`). O artefato é um zip com exe,
+  com `SYSMIDDLE_LIBS_DIR` como variável do repositório, e nunca em `pull_request`. Roda só em `master` (ou `workflow_dispatch`), conforme as regras do environment `production`; PRs para `master` só são aceitos a partir de `develop` (workflow `promocao-para-master.yml`). O artefato é um zip com exe,
   `.config`, `logger.xml` e scripts — **sem DLLs**. O exe sai em `bin\Release\net481\`.
 
 ### Paridade com o exe de console
