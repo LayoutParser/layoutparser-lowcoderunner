@@ -43,31 +43,33 @@ jobs:
         run: dotnet test .\tests\LayoutParserLowCodeRunner.Tests\LayoutParserLowCodeRunner.Tests.csproj -c Release
 
   # Build REAL: precisa das DLLs Sysmiddle, que existem so no runner self-hosted Windows (fora do git).
-  # ATENCAO ao label: 'dev-local' tambem existe no runner LINUX; 'windows' e obrigatorio.
+  # Labels: 'windows, production' = runner de producao (usado aqui); 'windows, dev-local' = maquina de teste do dev.
   # Nunca em pull_request (codigo de terceiros num runner com DLLs licenciadas).
+  # SYSMIDDLE_LIBS_DIR vem do environment 'production'; roda so em master (e tags permitidas pelo environment production), nunca em develop.
   build-real:
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch')
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch')
     needs: [guarda-binarios, testes]
-    runs-on: [self-hosted, windows, dev-local]
+    runs-on: [self-hosted, windows, production]
+    environment: production
     env:
-      # Pasta com a Bin Sysmiddle v4.4.1 NO RUNNER (variavel do repositorio/organizacao; nunca no git).
+      # Pasta com a Bin Sysmiddle v4.4.1 NO RUNNER (variavel do environment production; nunca no git).
       SYSMIDDLE_LIBS_DIR: ${{ vars.SYSMIDDLE_LIBS_DIR }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Exige SYSMIDDLE_LIBS_DIR
-        shell: pwsh
+        shell: powershell
         run: |
           if (-not $env:SYSMIDDLE_LIBS_DIR -or -not (Test-Path (Join-Path $env:SYSMIDDLE_LIBS_DIR 'SysMiddle.Base.dll'))) {
             Write-Error 'Defina a variavel SYSMIDDLE_LIBS_DIR (Bin Sysmiddle) no runner/repositorio.'; exit 1
           }
 
       - name: Build real (Release, x86, worker com SDK)
-        shell: pwsh
+        shell: powershell
         run: dotnet build .\LayoutParserLowCodeRunner.csproj -c Release
 
       - name: Empacotar (sem DLLs proprietarias)
-        shell: pwsh
+        shell: powershell
         run: |
           $out = 'bin\Release\net481'
           $pkg = 'dist\LayoutParserLowCodeRunner'

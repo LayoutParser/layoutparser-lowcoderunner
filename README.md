@@ -221,8 +221,8 @@ O repositório contém **apenas código-fonte**. O build real define o símbolo 
   `SYSMIDDLE_LIBS_DIR` (ver `build.yml`, job `build-real`).
 - **Não** reintroduzir `appConnector.Client.Core/Interface` (bootstrap do host e threads que derrubavam o processo).
 - O CI hospedado não tem as DLLs: compila o stub e roda os testes. O **build real** roda só no runner
-  `[self-hosted, windows, dev-local]` (o label `dev-local` também existe no runner Linux — **`windows` é obrigatório**),
-  com `SYSMIDDLE_LIBS_DIR` como variável do repositório, e nunca em `pull_request`. O artefato é um zip com exe,
+  `[self-hosted, windows, production]` (`[self-hosted, windows, dev-local]` é a máquina de teste do dev; `windows` é obrigatório nos dois),
+  com `SYSMIDDLE_LIBS_DIR` como variável do repositório, e nunca em `pull_request`. Roda só em `master` (ou `workflow_dispatch`), conforme as regras do environment `production`; PRs para `master` só são aceitos a partir de `develop` (workflow `promocao-para-master.yml`). O artefato é um zip com exe,
   `.config`, `logger.xml` e scripts — **sem DLLs**. O exe sai em `bin\Release\net481\`.
 
 ### Paridade com o exe de console
@@ -233,4 +233,4 @@ O repositório contém **apenas código-fonte**. O build real define o símbolo 
 ```
 
 Corpus (`manifest.tsv`: `arquivo<TAB>mapperId<TAB>nfe`) fica **fora do git**. Compara o XML do serviço com o do exe
-byte a byte e imprime só índice/mapper/status. Ver [docs/relatorio-api.md](docs/relatorio-api.md).
+byte a byte e imprime só índice/mapper/status. Contrato completo com exemplos JSON: [docs/contrato-v1.md](docs/contrato-v1.md). Relatório para a API: [docs/relatorio-api.md](docs/relatorio-api.md).

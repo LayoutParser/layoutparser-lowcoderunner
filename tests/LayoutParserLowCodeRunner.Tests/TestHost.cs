@@ -11,7 +11,7 @@ namespace LayoutParserLowCodeRunner.Tests
     internal sealed class TestHost : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "lpr-tests-" + Guid.NewGuid().ToString("N"));
-        public string TrackFile => Path.Combine(Root, "track.txt");
+        public string TrackDir => Path.Combine(Root, "track");
         public string LogDir => Path.Combine(Root, "logs");
         public ServiceHost Host { get; }
         public HttpClient Http { get; }
@@ -38,7 +38,7 @@ namespace LayoutParserLowCodeRunner.Tests
             if (overrides != null)
                 foreach (var kv in overrides) cfg[kv.Key] = kv.Value;
 
-            Environment.SetEnvironmentVariable("FAKE_RUNNER_TRACK", TrackFile);
+            Environment.SetEnvironmentVariable("FAKE_RUNNER_TRACK", TrackDir);
             Host = new ServiceHost(ServiceOptions.Load(k => cfg.TryGetValue(k, out var v) ? v : null));
             Host.Start();
             Http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + Host.Port + "/"), Timeout = TimeSpan.FromSeconds(60) };
@@ -68,16 +68,16 @@ namespace LayoutParserLowCodeRunner.Tests
         public static async Task<T> Read<T>(HttpResponseMessage r) where T : class
             => Json.Deserialize<T>(await r.Content.ReadAsByteArrayAsync());
 
-        /// <summary>Pico de workers simultâneos e pids observados no arquivo de rastreio do worker falso.</summary>
+        /// <summary>Pico de workers simultâneos e pids observados no diretorio de rastreio do worker falso.</summary>
         public (int MaxOverlap, List<int> Pids) Track()
         {
             var events = new List<(long Ticks, int Delta)>();
             var pids = new List<int>();
-            if (File.Exists(TrackFile))
+            if (Directory.Exists(TrackDir))
             {
-                foreach (var line in File.ReadAllLines(TrackFile))
+                foreach (var f in Directory.GetFiles(TrackDir))
                 {
-                    var p = line.Split(' ');
+                    var p = Path.GetFileName(f).Split('_');
                     if (p.Length != 3) continue;
                     if (p[0] == "S") pids.Add(int.Parse(p[1]));
                     events.Add((long.Parse(p[2]), p[0] == "S" ? 1 : -1));

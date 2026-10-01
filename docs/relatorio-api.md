@@ -54,7 +54,7 @@ Erro: `{error,exitCode,correlationId}` — 400 (7) · 404 (8) · 422 (1/4/5/9/10
 - [ ] Definir `Package` (o `<PackageMappers>` do `config.xml` da instância).
 - [ ] Firewall: allowlist do IP da API; bloquear o resto.
 - [ ] No runner self-hosted Windows: variável de repositório `SYSMIDDLE_LIBS_DIR` (Bin Sysmiddle). Label do job:
-      `[self-hosted, windows, dev-local]`.
+      `[self-hosted, windows, production]`.
 - [ ] Fornecer o corpus de paridade (fora do git) e rodar `scripts/Test-Parity.ps1` no host licenciado.
 
 ## Estado de validação (honesto)
