@@ -58,18 +58,18 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Exige SYSMIDDLE_LIBS_DIR
-        shell: pwsh
+        shell: powershell
         run: |
           if (-not $env:SYSMIDDLE_LIBS_DIR -or -not (Test-Path (Join-Path $env:SYSMIDDLE_LIBS_DIR 'SysMiddle.Base.dll'))) {
             Write-Error 'Defina a variavel SYSMIDDLE_LIBS_DIR (Bin Sysmiddle) no runner/repositorio.'; exit 1
           }
 
       - name: Build real (Release, x86, worker com SDK)
-        shell: pwsh
+        shell: powershell
         run: dotnet build .\LayoutParserLowCodeRunner.csproj -c Release
 
       - name: Empacotar (sem DLLs proprietarias)
-        shell: pwsh
+        shell: powershell
         run: |
           $out = 'bin\Release\net481'
           $pkg = 'dist\LayoutParserLowCodeRunner'
