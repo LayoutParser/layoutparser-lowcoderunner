@@ -45,9 +45,9 @@ jobs:
   # Build REAL: precisa das DLLs Sysmiddle, que existem so no runner self-hosted Windows (fora do git).
   # Labels: 'windows, production' = runner de producao (usado aqui); 'windows, dev-local' = maquina de teste do dev.
   # Nunca em pull_request (codigo de terceiros num runner com DLLs licenciadas).
-  # SYSMIDDLE_LIBS_DIR vem do environment 'production'; as regras de deployment do environment limitam o job (hoje: master e tag).
+  # SYSMIDDLE_LIBS_DIR vem do environment 'production'; roda so em master (e tags permitidas pelo environment production), nunca em develop.
   build-real:
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch')
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch')
     needs: [guarda-binarios, testes]
     runs-on: [self-hosted, windows, production]
     environment: production
