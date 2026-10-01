@@ -1,0 +1,44 @@
+# master so recebe promocao de develop (PR de develop do proprio repositorio).
+name: Guard de promocao para master
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promocao-para-master-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  origem-da-promocao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validar origem da promocao
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          falhou=0
+          if [ "$BASE_REF" != "master" ]; then
+            echo "::error::A base do PR deve ser master (encontrado: $BASE_REF)."
+            falhou=1
+          fi
+          if [ "$HEAD_REF" != "develop" ]; then
+            echo "::error::master so recebe promocao da branch develop (origem: $HEAD_REF)."
+            falhou=1
+          fi
+          if [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            echo "::error::PRs de forks nao sao aceitos para master (origem: $HEAD_REPO)."
+            falhou=1
+          fi
+          if [ "$falhou" -ne 0 ]; then
+            exit 1
+          fi
+          echo "Promocao valida: $HEAD_REPO:$HEAD_REF -> $BASE_REF" >> "$GITHUB_STEP_SUMMARY"
