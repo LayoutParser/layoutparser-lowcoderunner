@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Diagnóstico descartável: o SDK Sysmiddle carrega MAIS DE UM projeto (<PackageMappers>) no mesmo processo?
+    Só código-fonte. Nenhuma DLL proprietária no git (R0): aponte SYSMIDDLE_LIBS_DIR para a Bin Sysmiddle v4.4.1
+    (a mesma do build real do runner) ou coloque as DLLs em .\libs (ignorada pelo git).
+    Não faz parte do build do serviço nem do CI.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net481</TargetFramework>
+    <PlatformTarget>x86</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>SysmiddleProbe</AssemblyName>
+    <RootNamespace>SysmiddleProbe</RootNamespace>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(SYSMIDDLE_LIBS_DIR)' == '' And Exists('$(MSBuildProjectDirectory)\libs\SysMiddle.Base.dll')">
+    <SYSMIDDLE_LIBS_DIR>$(MSBuildProjectDirectory)\libs</SYSMIDDLE_LIBS_DIR>
+  </PropertyGroup>
+
+  <Target Name="ExigeSysmiddleLibs" BeforeTargets="BeforeBuild" Condition="'$(SYSMIDDLE_LIBS_DIR)' == ''">
+    <Error Text="Defina SYSMIDDLE_LIBS_DIR (Bin Sysmiddle v4.4.1) ou coloque as DLLs em tools\SysmiddleProbe\libs." />
+  </Target>
+
+  <ItemGroup Condition="'$(SYSMIDDLE_LIBS_DIR)' != ''">
+    <Reference Include="SysMiddle.Base">
+      <HintPath>$(SYSMIDDLE_LIBS_DIR)\SysMiddle.Base.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SysMiddle.ConnectUs.Core">
+      <HintPath>$(SYSMIDDLE_LIBS_DIR)\SysMiddle.ConnectUs.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Mesmos binding redirects do runner (o exe roda de dentro da Bin e resolve as DLLs pelo app base). -->
+  <Target Name="CopiaAppConfig" AfterTargets="Build">
+    <Copy SourceFiles="..\..\App.config" DestinationFiles="$(OutDir)SysmiddleProbe.exe.config" />
+  </Target>
+
+</Project>
