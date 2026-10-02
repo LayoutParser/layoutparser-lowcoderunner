@@ -48,15 +48,15 @@ namespace LayoutParserLowCodeRunner.Service.Application
                 {
                     LastDeepOk = false;
                     LastDeepExitCode = -1;
-                    throw new ServiceException(504, -1, "Tempo limite de execucao excedido.");
+                    throw new ServiceException(504, -1, ErrorCodes.Timeout, "Tempo limite de execucao excedido.");
                 }
                 if (r.Cancelled)
-                    throw new ServiceException(499, -1, "Requisicao cancelada.");
+                    throw new ServiceException(499, -1, ErrorCodes.ClientClosedRequest, "Requisicao cancelada.");
 
                 LastDeepExitCode = r.ExitCode;
                 LastDeepOk = r.ExitCode == RunnerExitCodes.Ok;
                 if (r.ExitCode != RunnerExitCodes.Ok)
-                    throw new ServiceException(ExitMap.Status(r.ExitCode), r.ExitCode, ExitMap.Message(r.ExitCode));
+                    throw new ServiceException(ExitMap.Status(r.ExitCode), r.ExitCode, ErrorCodes.ForExit(r.ExitCode), ExitMap.Message(r.ExitCode));
 
                 _cache = Parse(r.Stdout);
                 _cachedAtUtc = DateTime.UtcNow;

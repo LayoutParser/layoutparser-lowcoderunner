@@ -9,13 +9,16 @@ namespace LayoutParserLowCodeRunner.Service.Infra
     {
         public int Status { get; }
         public int ExitCode { get; }
+        /// <summary>Código estável do contrato (ver ErrorCodes).</summary>
+        public string Code { get; }
         public int? RetryAfterSeconds { get; }
 
-        public ServiceException(int status, int exitCode, string message, int? retryAfterSeconds = null)
+        public ServiceException(int status, int exitCode, string code, string message, int? retryAfterSeconds = null)
             : base(message)
         {
             Status = status;
             ExitCode = exitCode;
+            Code = code;
             RetryAfterSeconds = retryAfterSeconds;
         }
     }
@@ -51,7 +54,7 @@ namespace LayoutParserLowCodeRunner.Service.Infra
                 try
                 {
                     if (enforceQueueLimit && q > _maxQueue)
-                        throw new ServiceException(503, 0, "Fila de execucao cheia; tente novamente.", _retryAfter);
+                        throw new ServiceException(503, 0, Application.ErrorCodes.QueueFull, "Fila de execucao cheia; tente novamente.", _retryAfter);
                     await _slots.WaitAsync(ct).ConfigureAwait(false);
                 }
                 finally
