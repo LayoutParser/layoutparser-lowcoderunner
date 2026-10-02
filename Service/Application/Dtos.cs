@@ -55,6 +55,8 @@ namespace LayoutParserLowCodeRunner.Service.Application
         [DataMember(Name = "status")] public string Status { get; set; }
         [DataMember(Name = "output", EmitDefaultValue = false)] public string Output { get; set; }
         [DataMember(Name = "error", EmitDefaultValue = false)] public string Error { get; set; }
+        /// <summary>Código estável (ErrorCodes) em failed/timeout/skipped; ausente em ok.</summary>
+        [DataMember(Name = "code", EmitDefaultValue = false)] public string Code { get; set; }
         [DataMember(Name = "exitCode", EmitDefaultValue = false)] public int? ExitCode { get; set; }
         [DataMember(Name = "durationMs")] public long DurationMs { get; set; }
     }
@@ -81,6 +83,8 @@ namespace LayoutParserLowCodeRunner.Service.Application
     {
         [DataMember(Name = "error")] public string Error { get; set; }
         [DataMember(Name = "exitCode")] public int ExitCode { get; set; }
+        /// <summary>Código estável do erro (ver ErrorCodes); o <c>error</c> é só texto humano.</summary>
+        [DataMember(Name = "code")] public string Code { get; set; }
         [DataMember(Name = "correlationId")] public string CorrelationId { get; set; }
     }
 

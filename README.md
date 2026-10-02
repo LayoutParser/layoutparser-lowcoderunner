@@ -82,19 +82,28 @@ Corpo acima de `MaxBodyBytes` (20 MB) → **413**. Só `Content-Length` (chunked
 
 ### Erros
 
-Todo erro: `{"error":"<sanitizado>","exitCode":N,"correlationId":"…"}`. A mensagem é fixa por exit code e passa
-pelo `LowCodeErrorSanitizer` (caminhos → `[caminho interno]`); nunca há stack, caminho ou conteúdo de documento.
+Todo erro: `{"error":"<sanitizado>","exitCode":N,"code":"<estavel>","correlationId":"…"}`. A mensagem é fixa por exit
+code e passa pelo `LowCodeErrorSanitizer` (caminhos → `[caminho interno]`); nunca há stack, caminho ou conteúdo de
+documento. `code` é o identificador estável (campo aditivo; definido em `Service/Application/ErrorCodes.cs`); no batch,
+resultados `failed`/`timeout`/`skipped` também trazem `code` (`skipped` → `not_executed`).
 `exitCode` `-1` = falha sem exit de worker (timeout/cancelamento); `0` = sem exit (rota/método).
 
-| HTTP | Quando | exitCode |
-|---|---|---|
-| 400 | JSON inválido; mapper ausente/ambíguo; candidato inválido | 7 |
-| 404 | `mapperName`/`mapperId` não resolvido; rota inexistente | 8 / 0 |
-| 405 / 411 / 413 | método errado / sem Content-Length / corpo grande | — |
-| 422 | documento vazio; falha de transformação; entrada não encontrada; resultado vazio; package não configurado / não encontrado | 4 / 1 / 4 / 5 / 9 / 10 |
-| 503 | bootstrap/licença do SDK (exit 3); serviço sem `GlobalFolder`; **fila cheia** (com `Retry-After`) | 3 / 0 |
-| 504 | timeout de execução (worker morto) | -1 |
-| 500 | interno / exit 2 / 6 / desconhecido | 1 / 2 / 6 |
+| HTTP | Quando | exitCode | code |
+|---|---|---|---|
+| 400 | JSON inválido; mapper ausente/ambíguo; candidato inválido | 7 | `invalid_request` |
+| 404 | `mapperName`/`mapperId` não resolvido | 8 | `mapper_not_found` |
+| 404 | rota inexistente | 0 | `route_not_found` |
+| 405 / 411 / 413 / 431 | método errado / sem Content-Length / corpo grande / cabeçalhos grandes | 0 | `invalid_request` |
+| 422 | falha de transformação | 1 | `transform_failed` |
+| 422 | documento vazio (rejeitado pelo serviço, sem worker) | 4 | `empty_document` |
+| 422 | entrada não encontrada (exit 4 do worker) | 4 | `input_not_found` |
+| 422 | resultado vazio | 5 | `empty_result` |
+| 422 | package não configurado / não encontrado | 9 / 10 | `package_not_configured` / `package_not_found` |
+| 503 | bootstrap/licença do SDK (exit 3); serviço sem `GlobalFolder` | 3 | `runner_unavailable` |
+| 503 | **fila cheia** (com `Retry-After`) | 0 | `queue_full` |
+| 504 | timeout de execução (worker morto) | -1 | `timeout` |
+| 499 | cliente cancelou | -1 | `client_closed_request` |
+| 500 | interno / exit 2 / 6 / desconhecido | 1 / 2 / 6 | `runtime_error` |
 
 Exit codes do worker (`RunnerExitCodes`): 0 Ok, 1 Fatal, 2 UsageError (posicional), 3 BootstrapFailed, 4 InputNotFound,
 5 EmptyResult, 6 SweepAllFailed, 7 InvalidNamedArgument, 8 MapperNameUnresolved, 9 PackageNotConfigured, 10 PackageNotFound.

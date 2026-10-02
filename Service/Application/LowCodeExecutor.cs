@@ -58,10 +58,10 @@ namespace LayoutParserLowCodeRunner.Service.Application
         public static ServiceException ToException(ExecOutcome o)
         {
             if (o.TimedOut)
-                return new ServiceException(504, -1, "Tempo limite de execucao excedido.");
+                return new ServiceException(504, -1, ErrorCodes.Timeout, "Tempo limite de execucao excedido.");
             if (o.Cancelled)
-                return new ServiceException(499, -1, "Requisicao cancelada.");
-            return new ServiceException(Status(o.ExitCode), o.ExitCode, Message(o.ExitCode));
+                return new ServiceException(499, -1, ErrorCodes.ClientClosedRequest, "Requisicao cancelada.");
+            return new ServiceException(Status(o.ExitCode), o.ExitCode, ErrorCodes.ForExit(o.ExitCode), Message(o.ExitCode));
         }
     }
 
@@ -91,7 +91,7 @@ namespace LayoutParserLowCodeRunner.Service.Application
         public void EnsureConfigured()
         {
             if (string.IsNullOrWhiteSpace(_opt.GlobalFolder))
-                throw new ServiceException(503, RunnerExitCodes.BootstrapFailed, "Servico nao configurado (GlobalFolder).");
+                throw new ServiceException(503, RunnerExitCodes.BootstrapFailed, ErrorCodes.RunnerUnavailable, "Servico nao configurado (GlobalFolder).");
         }
 
         public async Task<ExecOutcome> ExecuteAsync(

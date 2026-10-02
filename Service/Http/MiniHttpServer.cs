@@ -269,7 +269,7 @@ namespace LayoutParserLowCodeRunner.Service.Http
             return -1;
         }
 
-        /// <summary>Erro de protocolo no MESMO formato JSON do contrato ({error,exitCode,correlationId}): a API monta o cliente a partir dele.</summary>
+        /// <summary>Erro de protocolo no MESMO formato JSON do contrato ({error,exitCode,code,correlationId}): a API monta o cliente a partir dele.</summary>
         private static HttpResponseData Simple(int status, string message)
         {
             var corr = Guid.NewGuid().ToString("N");
@@ -277,7 +277,7 @@ namespace LayoutParserLowCodeRunner.Service.Http
             {
                 Status = status,
                 Body = LayoutParserLowCodeRunner.Service.Application.Json.Serialize(
-                    new LayoutParserLowCodeRunner.Service.Application.ErrorResponse { Error = message, ExitCode = 0, CorrelationId = corr })
+                    new LayoutParserLowCodeRunner.Service.Application.ErrorResponse { Error = message, ExitCode = 0, Code = LayoutParserLowCodeRunner.Service.Application.ErrorCodes.ForProtocolStatus(status), CorrelationId = corr })
             };
             resp.Headers["X-Correlation-ID"] = corr;
             return resp;

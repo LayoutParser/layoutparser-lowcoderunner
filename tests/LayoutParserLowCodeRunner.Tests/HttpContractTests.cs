@@ -289,7 +289,7 @@ namespace LayoutParserLowCodeRunner.Tests
         [InlineData("GET", "v1/nada", null, 404, 0)]
         [InlineData("GET", "v1/transform", null, 405, 0)]
         [InlineData("POST", "v1/transform", "corpo-grande", 413, 0)]
-        public async Task Corpo_de_erro_tem_exatamente_as_tres_chaves_do_contrato(
+        public async Task Corpo_de_erro_tem_exatamente_as_quatro_chaves_do_contrato(
             string metodo, string rota, string corpo, int status, int exitCode)
         {
             using var t = new TestHost(new() { ["RunnerTimeoutSeconds"] = "1", ["MaxBodyBytes"] = "1024" });
@@ -307,13 +307,78 @@ namespace LayoutParserLowCodeRunner.Tests
 
             using var doc = System.Text.Json.JsonDocument.Parse(bruto);
             var raiz = doc.RootElement;
-            Assert.Equal(new[] { "correlationId", "error", "exitCode" },
+            Assert.Equal(new[] { "code", "correlationId", "error", "exitCode" },
                 raiz.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
             Assert.Equal(System.Text.Json.JsonValueKind.String, raiz.GetProperty("error").ValueKind);
             Assert.False(string.IsNullOrWhiteSpace(raiz.GetProperty("error").GetString()));
             Assert.Equal(exitCode, raiz.GetProperty("exitCode").GetInt32());
+            Assert.Equal(System.Text.Json.JsonValueKind.String, raiz.GetProperty("code").ValueKind);
+            Assert.False(string.IsNullOrWhiteSpace(raiz.GetProperty("code").GetString()));
             Assert.Equal(r.Headers.GetValues("X-Correlation-ID").Single(), raiz.GetProperty("correlationId").GetString());
             Assert.DoesNotContain(@":\", bruto); // sem caminho
+        }
+
+        /// <summary>Campo estável <c>code</c> por situação (mapeamento único em ErrorCodes).</summary>
+        [Theory]
+        [InlineData("POST", "v1/transform", "{nao e json", 400, "invalid_request")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"x\"}", 400, "invalid_request")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"x\",\"mapperName\":\"NAOEXISTE\"}", 404, "mapper_not_found")]
+        [InlineData("GET", "v1/nada", null, 404, "route_not_found")]
+        [InlineData("GET", "v1/transform", null, 405, "invalid_request")]
+        [InlineData("POST", "v1/transform", "corpo-grande", 413, "invalid_request")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:1\",\"mapperName\":\"M\"}", 422, "transform_failed")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EMPTY\",\"mapperName\":\"M\"}", 422, "empty_result")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:4\",\"mapperName\":\"M\"}", 422, "input_not_found")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"   \",\"mapperName\":\"M\"}", 422, "empty_document")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:10\",\"mapperName\":\"M\"}", 422, "package_not_found")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:3\",\"mapperName\":\"M\"}", 503, "runner_unavailable")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:2\",\"mapperName\":\"M\"}", 500, "runtime_error")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:6\",\"mapperName\":\"M\"}", 500, "runtime_error")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"EXIT:77\",\"mapperName\":\"M\"}", 500, "runtime_error")]
+        [InlineData("POST", "v1/transform", "{\"document\":\"SLEEP:30000\",\"mapperName\":\"M\"}", 504, "timeout")]
+        public async Task Erro_traz_o_code_estavel_por_situacao(string metodo, string rota, string corpo, int status, string code)
+        {
+            using var t = new TestHost(new() { ["RunnerTimeoutSeconds"] = "1", ["MaxBodyBytes"] = "1024" });
+            var req = new HttpRequestMessage(new HttpMethod(metodo), rota);
+            if (corpo != null)
+                req.Content = new StringContent(corpo == "corpo-grande" ? new string('a', 5000) : corpo, Encoding.UTF8, "application/json");
+            var r = await t.Http.SendAsync(req);
+
+            Assert.Equal(status, (int)r.StatusCode);
+            Assert.Equal(code, (await TestHost.Read<ErrorResponse>(r)).Code);
+        }
+
+        [Fact]
+        public async Task Fila_cheia_tem_code_queue_full_e_sem_globalFolder_runner_unavailable()
+        {
+            using (var t = new TestHost(new() { ["MaxConcurrentRunners"] = "1", ["MaxQueue"] = "0" }))
+            {
+                var primeiro = t.Transform("SLEEP:2500");
+                await EsperarAsync(() => t.Track().Pids.Count == 1, "o primeiro worker nao subiu");
+                var r = await t.Transform("x");
+                Assert.True(r.Headers.Contains("Retry-After"));
+                Assert.Equal("queue_full", (await TestHost.Read<ErrorResponse>(r)).Code);
+                await primeiro;
+            }
+            using (var t = new TestHost(new() { ["GlobalFolder"] = "" }))
+            {
+                var r = await t.Transform("x");
+                Assert.False(r.Headers.Contains("Retry-After"));
+                Assert.Equal("runner_unavailable", (await TestHost.Read<ErrorResponse>(r)).Code);
+            }
+        }
+
+        [Fact]
+        public async Task Chunked_411_tem_code_invalid_request()
+        {
+            using var t = new TestHost();
+            var req = new HttpRequestMessage(HttpMethod.Post, "v1/transform");
+            req.Headers.TransferEncodingChunked = true;
+            req.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+            var r = await t.Http.SendAsync(req);
+
+            Assert.Equal(HttpStatusCode.LengthRequired, r.StatusCode);
+            Assert.Equal("invalid_request", (await TestHost.Read<ErrorResponse>(r)).Code);
         }
 
         [Fact]
