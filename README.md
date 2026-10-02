@@ -215,6 +215,14 @@ e por mapeador: `SLOW:<ms>:x`, `FAIL:<n>:x`). Cobrem-se: 200/400/404/422/503/504
 batch (ordem, ondas, parcial), cancelamento (worker morto e slot devolvido), carga leve sem vazar processos/pastas,
 ausência de vazamento nos logs — além dos testes portados da API (parser de argumentos, budget, sanitizer).
 
+### Probe do SDK (`tools/SysmiddleProbe`)
+
+Diagnóstico descartável, fora do CI e do artefato do serviço: lista os projetos/PackageMappers carregados pelo SDK,
+o executor por projeto, contagens, tempos e `MapperGuid` repetido (para provar se um processo atende todos os
+PackageMappers). A saída traz só guids, contagens e tempos. Build com `SYSMIDDLE_LIBS_DIR` apontando para a Bin do
+Sysmiddle; copie `SysmiddleProbe.exe` e `SysmiddleProbe.exe.config` para essa Bin e rode
+`SysmiddleProbe.exe --globalFolder <pasta do global.config>`.
+
 ### Binários proprietários (R0)
 
 O repositório contém **apenas código-fonte**. O build real define o símbolo `SYSMIDDLE` ao encontrar as DLLs:
