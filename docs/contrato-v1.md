@@ -12,7 +12,7 @@ Todos os exemplos abaixo foram capturados do serviço real rodando com o worker 
 - Cancelar a request (fechar a conexão) cancela a execução: o worker é morto e o slot volta.
 - Sem autenticação: isolamento de rede (firewall 172.25.32.5).
 - **Formato de erro único** (inclusive erros de protocolo 404/405/411/413/431/500): `application/json` com
-  **exatamente** `{"error":string,"exitCode":int,"correlationId":string}`. `error` é fixo por causa e sem caminhos.
+  **exatamente** `{"error":string,"exitCode":int,"code":string,"correlationId":string}`. `error` é fixo por causa e sem caminhos.
 
 ## Rotas
 
@@ -70,8 +70,8 @@ do serviço, `false`). `fileName`: nome lógico do documento (omitido = `documen
 // response (exemplo com parcial)
 {"budgetSeconds":3,"completed":2,"partial":true,"waves":2,"results":[
  {"index":0,"mapperId":"MAP_1","status":"ok","exitCode":0,"durationMs":276,"output":"<...>"},
- {"index":1,"mapperName":"B","status":"failed","exitCode":8,"durationMs":234,"error":"Mapeador nao encontrado no package."},
- {"index":2,"mapperName":"C","status":"timeout","durationMs":3001,"error":"Tempo limite excedido."}]}
+ {"index":1,"mapperName":"B","status":"failed","exitCode":8,"durationMs":234,"error":"Mapeador nao encontrado no package.","code":"mapper_not_found"},
+ {"index":2,"mapperName":"C","status":"timeout","durationMs":3001,"error":"Tempo limite excedido.","code":"timeout"}]}
 ```
 
 `status` ∈ `ok | failed | timeout | skipped` (`skipped` = nem chegou a rodar; sem `durationMs` útil). `results` mantém
@@ -83,26 +83,46 @@ em execução são mortos (`timeout`) e o que já terminou é devolvido (`partia
 
 ```json
 // 400 — {"document":"d"}   (sem mapper)
-{"correlationId":"312bb1a6472540d9b1568427d8223c48","error":"Informe exatamente um entre mapperId e mapperName.","exitCode":7}
+{"code":"invalid_request","correlationId":"312bb1a6472540d9b1568427d8223c48","error":"Informe exatamente um entre mapperId e mapperName.","exitCode":7}
 // 404 — mapper não resolvido
-{"correlationId":"5f9811fa8ee24bddbfa43e5a490c0020","error":"Mapeador nao encontrado no package.","exitCode":8}
+{"code":"mapper_not_found","correlationId":"5f9811fa8ee24bddbfa43e5a490c0020","error":"Mapeador nao encontrado no package.","exitCode":8}
 // 422 — resultado vazio
-{"correlationId":"8384fcfc49044773bb9a0ae05b5d8b01","error":"O mapeador retornou resultado vazio.","exitCode":5}
+{"code":"empty_result","correlationId":"8384fcfc49044773bb9a0ae05b5d8b01","error":"O mapeador retornou resultado vazio.","exitCode":5}
+// 422 — documento vazio (rejeitado pelo serviço, sem subir worker)
+{"code":"empty_document","correlationId":"0c1f5e0a7b3d4a2e9f6d8b1c2a3e4f50","error":"Documento de entrada vazio.","exitCode":4}
 // 504 — timeout de execução (worker morto)
-{"correlationId":"d0dfb247e90c48a7af23e8ab9f367565","error":"Tempo limite de execucao excedido.","exitCode":-1}
+{"code":"timeout","correlationId":"d0dfb247e90c48a7af23e8ab9f367565","error":"Tempo limite de execucao excedido.","exitCode":-1}
 ```
 
-| HTTP | Causa | `exitCode` | Retry-After |
-|---|---|---|---|
-| 400 | JSON inválido; mapper ausente/ambíguo; candidato inválido/lista vazia/acima do máximo | 7 | — |
-| 404 | mapper não resolvido; rota inexistente | 8 / 0 | — |
-| 405 / 411 / 413 / 431 | método errado / sem Content-Length (chunked) / corpo grande / cabeçalhos grandes | 0 | — |
-| 422 | documento vazio (4); falha de transformação (1); entrada não encontrada (4); resultado vazio (5); package não configurado (9); package não encontrado/licença (10) | 1,4,5,9,10 | — |
-| 503 **sem** Retry-After | bootstrap/licença do SDK (exit 3); serviço sem `GlobalFolder` | 3 | — |
-| 503 **com** `Retry-After` | fila cheia (`MaxQueue`) | 0 | segundos (30) |
-| 504 | timeout de execução (`RunnerTimeoutSeconds`) | -1 | — |
-| 499 | cliente cancelou (raramente observável pelo cliente) | -1 | — |
-| 500 | interno / exit 2, 6 ou desconhecido | 1 / 2 / 6 | — |
+(Exemplos adaptados fielmente do formato real: campo `code` adicionado; correlationIds ilustrativos.)
+
+`code` é **estável** (usar este para decidir; `error` é só texto humano). Campo aditivo: `error`, `exitCode` e
+`correlationId` seguem como antes. Mapeamento único em `Service/Application/ErrorCodes.cs`.
+
+| HTTP | Causa | `exitCode` | `code` | Retry-After |
+|---|---|---|---|---|
+| 400 | JSON inválido; mapper ausente/ambíguo; candidato inválido/lista vazia/acima do máximo | 7 | `invalid_request` | — |
+| 404 | mapper não resolvido | 8 | `mapper_not_found` | — |
+| 404 | rota inexistente | 0 | `route_not_found` | — |
+| 405 / 411 / 413 / 431 | método errado / sem Content-Length (chunked) / corpo grande / cabeçalhos grandes | 0 | `invalid_request` | — |
+| 422 | falha de transformação | 1 | `transform_failed` | — |
+| 422 | documento vazio (rejeitado pelo serviço, sem worker) | 4 | `empty_document` | — |
+| 422 | entrada não encontrada (exit 4 vindo do worker) | 4 | `input_not_found` | — |
+| 422 | resultado vazio | 5 | `empty_result` | — |
+| 422 | package não configurado | 9 | `package_not_configured` | — |
+| 422 | package não encontrado/licença | 10 | `package_not_found` | — |
+| 503 **sem** Retry-After | bootstrap/licença do SDK (exit 3); serviço sem `GlobalFolder` | 3 | `runner_unavailable` | — |
+| 503 **com** `Retry-After` | fila cheia (`MaxQueue`) | 0 | `queue_full` | segundos (30) |
+| 504 | timeout de execução (`RunnerTimeoutSeconds`) | -1 | `timeout` | — |
+| 499 | cliente cancelou (raramente observável pelo cliente) | -1 | `client_closed_request` | — |
+| 500 | interno / exit 2, 6 ou desconhecido | 1 / 2 / 6 | `runtime_error` | — |
+
+**exit 4 (decisão):** "documento vazio" é distinguível. O serviço valida o documento antes de subir o worker e responde
+422 com exitCode 4 e `empty_document`; um exit 4 que venha do worker (arquivo de entrada não encontrado) sai como
+`input_not_found`. Mesmo `exitCode`, `code` diferentes.
+
+No batch, cada resultado `failed`/`timeout`/`skipped` traz também `code` (mesmos valores; `skipped` →
+`not_executed`, `timeout` → `timeout`); `ok` não tem `code`.
 
 `exitCode`: os do worker (`RunnerExitCodes`: 0 Ok, 1 Fatal, 2 UsageError, 3 BootstrapFailed, 4 InputNotFound, 5 EmptyResult,
 6 SweepAllFailed, 7 InvalidNamedArgument, 8 MapperNameUnresolved, 9 PackageNotConfigured, 10 PackageNotFound); `-1` =

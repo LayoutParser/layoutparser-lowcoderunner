@@ -33,6 +33,9 @@ namespace LayoutParserLowCodeRunner.Tests
             Assert.Equal(9, b.Results[1].ExitCode);
             Assert.Equal("failed", b.Results[2].Status);
             Assert.Equal(8, b.Results[2].ExitCode);
+            Assert.Null(b.Results[0].Code);
+            Assert.Equal("package_not_configured", b.Results[1].Code);
+            Assert.Equal("mapper_not_found", b.Results[2].Code);
             Assert.Equal(3, b.Completed);
             Assert.False(b.Partial);
         }
@@ -64,6 +67,9 @@ namespace LayoutParserLowCodeRunner.Tests
             Assert.Contains("mapper=\"A\"", b.Results[0].Output);
             Assert.Equal("timeout", b.Results[1].Status);
             Assert.Equal("skipped", b.Results[2].Status);
+            Assert.Null(b.Results[0].Code);
+            Assert.Equal("timeout", b.Results[1].Code);
+            Assert.Equal("not_executed", b.Results[2].Code);
             Assert.Equal(1, b.Completed);
             Assert.Equal(3, b.BudgetSeconds); // min(trabalho, teto do request)
         }

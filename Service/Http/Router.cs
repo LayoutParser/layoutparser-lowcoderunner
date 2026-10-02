@@ -10,7 +10,7 @@ namespace LayoutParserLowCodeRunner.Service.Http
 {
     /// <summary>
     /// Rotas do contrato v1 e mapeamento de erro. Todo erro sai como
-    /// <c>{"error","exitCode","correlationId"}</c> com mensagem SANEADA (sem caminho/stack/documento).
+    /// <c>{"error","exitCode","code","correlationId"}</c> (code = ErrorCodes, estável) com mensagem SANEADA (sem caminho/stack/documento).
     /// exitCode -1 = falha sem exit code de worker (timeout/cancelamento); 0 = nenhum.
     /// </summary>
     internal sealed class Router
@@ -42,25 +42,25 @@ namespace LayoutParserLowCodeRunner.Service.Http
             }
             catch (ServiceException se)
             {
-                resp = Error(se.Status, se.ExitCode, se.Message, corr);
+                resp = Error(se.Status, se.ExitCode, se.Code, se.Message, corr);
                 if (se.RetryAfterSeconds.HasValue)
                     resp.Headers["Retry-After"] = se.RetryAfterSeconds.Value.ToString();
                 _log.Warn(corr, string.Format("{0} {1} -> {2} exit={3}", req.Method, req.Path, se.Status, se.ExitCode));
             }
             catch (OperationCanceledException)
             {
-                resp = Error(499, -1, "Requisicao cancelada.", corr);
+                resp = Error(499, -1, ErrorCodes.ClientClosedRequest, "Requisicao cancelada.", corr);
                 _log.Warn(corr, req.Method + " " + req.Path + " cancelada pelo cliente");
             }
             catch (SerializationException)
             {
-                resp = Error(400, RunnerExitCodes.InvalidNamedArgument, "JSON invalido.", corr);
+                resp = Error(400, RunnerExitCodes.InvalidNamedArgument, ErrorCodes.InvalidRequest, "JSON invalido.", corr);
             }
             catch (Exception ex)
             {
                 // Só o TIPO no log: a mensagem pode conter caminho/conteúdo.
                 _log.Error(corr, "erro interno: " + ex.GetType().Name);
-                resp = Error(500, RunnerExitCodes.Fatal, "Erro interno.", corr);
+                resp = Error(500, RunnerExitCodes.Fatal, ErrorCodes.RuntimeError, "Erro interno.", corr);
             }
 
             resp.Headers["X-Correlation-ID"] = corr;
@@ -97,7 +97,7 @@ namespace LayoutParserLowCodeRunner.Service.Http
                     return Ok(200, await _transform.BatchAsync(Json.Deserialize<BatchRequest>(req.Body), corr, ct).ConfigureAwait(false));
 
                 default:
-                    return Error(404, 0, "Rota nao encontrada.", corr);
+                    return Error(404, 0, ErrorCodes.RouteNotFound, "Rota nao encontrada.", corr);
             }
         }
 
@@ -120,10 +120,10 @@ namespace LayoutParserLowCodeRunner.Service.Http
 
         private static HttpResponseData MethodNotAllowed(string corr)
         {
-            return Error(405, 0, "Metodo nao permitido.", corr);
+            return Error(405, 0, ErrorCodes.InvalidRequest, "Metodo nao permitido.", corr);
         }
 
-        private static HttpResponseData Error(int status, int exitCode, string message, string corr)
+        private static HttpResponseData Error(int status, int exitCode, string code, string message, string corr)
         {
             return new HttpResponseData
             {
@@ -132,6 +132,7 @@ namespace LayoutParserLowCodeRunner.Service.Http
                 {
                     Error = LowCodeErrorSanitizer.ForWire(message),
                     ExitCode = exitCode,
+                    Code = code,
                     CorrelationId = corr
                 })
             };

@@ -24,7 +24,7 @@ Movem para o serviço: execução do mapeador, `SysmiddleDocumentRules`, concorr
 | `GET /v1/mappers` | `[{id,name}]` |
 | `GET /v1/health[?deep=true]` / `GET /v1/info` | ver README |
 
-Erro: `{error,exitCode,correlationId}` — 400 (7) · 404 (8) · 422 (1/4/5/9/10) · 503 (3, ou fila cheia com `Retry-After`) ·
+Erro: `{error,exitCode,code,correlationId}` (`code` estável: ver docs/contrato-v1.md) — 400 (7) · 404 (8) · 422 (1/4/5/9/10) · 503 (3, ou fila cheia com `Retry-After`) ·
 504 · 500. Enviar `X-Correlation-ID` (o serviço o espelha e o põe em todo log). Cancelar a request cancela a execução.
 
 ### Desvios da especificação (para a API se adaptar)

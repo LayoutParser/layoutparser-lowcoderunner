@@ -24,18 +24,18 @@ namespace LayoutParserLowCodeRunner.Service.Application
         public async Task<TransformResponse> TransformAsync(TransformRequest req, string corr, CancellationToken ct)
         {
             if (req == null)
-                throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument, "Body invalido.");
+                throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument, ErrorCodes.InvalidRequest, "Body invalido.");
 
             var id = Blank(req.MapperId);
             var name = Blank(req.MapperName);
             if (id == null && name == null)
                 name = _opt.DefaultMapperName; // só quando NENHUM foi informado
             if ((id == null) == (name == null))
-                throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument,
+                throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument, ErrorCodes.InvalidRequest,
                     "Informe exatamente um entre mapperId e mapperName.");
 
             if (string.IsNullOrWhiteSpace(req.Document))
-                throw new ServiceException(422, RunnerExitCodes.InputNotFound, "Documento de entrada vazio.");
+                throw new ServiceException(422, RunnerExitCodes.InputNotFound, ErrorCodes.EmptyDocument, "Documento de entrada vazio.");
 
             _exec.EnsureConfigured();
             var o = await _exec.ExecuteAsync(req.Document, req.FileName, id, name,
@@ -50,18 +50,18 @@ namespace LayoutParserLowCodeRunner.Service.Application
         public async Task<BatchResponse> BatchAsync(BatchRequest req, string corr, CancellationToken ct)
         {
             if (req == null || req.Candidates == null || req.Candidates.Count == 0)
-                throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument, "Informe ao menos um candidato.");
+                throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument, ErrorCodes.InvalidRequest, "Informe ao menos um candidato.");
             if (req.Candidates.Count > _opt.MaxCandidates)
-                throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument,
+                throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument, ErrorCodes.InvalidRequest,
                     "Candidatos demais (maximo " + _opt.MaxCandidates + ").");
             if (string.IsNullOrWhiteSpace(req.Document))
-                throw new ServiceException(422, RunnerExitCodes.InputNotFound, "Documento de entrada vazio.");
+                throw new ServiceException(422, RunnerExitCodes.InputNotFound, ErrorCodes.EmptyDocument, "Documento de entrada vazio.");
 
             for (int i = 0; i < req.Candidates.Count; i++)
             {
                 var c = req.Candidates[i];
                 if (c == null || (Blank(c.MapperId) == null) == (Blank(c.MapperName) == null))
-                    throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument,
+                    throw new ServiceException(400, RunnerExitCodes.InvalidNamedArgument, ErrorCodes.InvalidRequest,
                         "Candidato " + i + ": informe exatamente um entre mapperId e mapperName.");
             }
 
@@ -108,11 +108,13 @@ namespace LayoutParserLowCodeRunner.Service.Application
                 if (o.Cancelled && !o.Started)
                 {
                     res.Status = "skipped";
+                    res.Code = ErrorCodes.NotExecuted;
                 }
                 else if (o.TimedOut || o.Cancelled)
                 {
                     res.Status = "timeout";
                     res.Error = "Tempo limite excedido.";
+                    res.Code = ErrorCodes.Timeout;
                 }
                 else if (o.ExitCode == RunnerExitCodes.Ok)
                 {
@@ -125,6 +127,7 @@ namespace LayoutParserLowCodeRunner.Service.Application
                     res.Status = "failed";
                     res.ExitCode = o.ExitCode;
                     res.Error = LowCodeErrorSanitizer.ForWire(ExitMap.Message(o.ExitCode));
+                    res.Code = ErrorCodes.ForExit(o.ExitCode);
                 }
             }
             catch (Exception ex)
@@ -134,6 +137,7 @@ namespace LayoutParserLowCodeRunner.Service.Application
                 res.Status = "failed";
                 res.ExitCode = RunnerExitCodes.Fatal;
                 res.Error = "Erro interno do runner.";
+                res.Code = ErrorCodes.RuntimeError;
             }
             return res;
         }
