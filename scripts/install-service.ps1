@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Instala o LayoutParserLowCodeRunner como serviço Windows (firewall + variáveis de ambiente do serviço).
 

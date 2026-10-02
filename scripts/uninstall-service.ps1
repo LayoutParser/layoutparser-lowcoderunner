@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Remove o servico LayoutParserLowCodeRunner. Idempotente (nao falha se ja removido).
 .PARAMETER InstallDir  Se informado com -RemoveFiles, apaga os arquivos do servico (nunca a Bin do Sysmiddle inteira: so os 3 arquivos do runner).
