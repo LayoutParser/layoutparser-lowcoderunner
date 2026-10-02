@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Paridade: o XML do SERVICO HTTP deve ser IDENTICO ao do exe de console (o que a API chamava por Process.Start).
     Roda SO no host Windows licenciado (precisa do SDK Sysmiddle e do servico instalado/rodando).
